@@ -12,9 +12,18 @@ import { z } from 'zod';
  * are rejected at validation time.
  */
 
+/**
+ * Optional disambiguator for any locator variant. Mirrors Playwright's
+ * `.nth(n)` chain: `nth=0` selects the first match, `nth=2` the third,
+ * and so on. Without it, Playwright runs in strict mode and throws when
+ * a locator matches multiple elements.
+ */
+const NthModifier = z.number().int().nonnegative().optional();
+
 export const SelectorLocator = z
   .object({
     selector: z.string().min(1),
+    nth: NthModifier,
   })
   .strict();
 
@@ -23,6 +32,7 @@ export const RoleLocator = z
     role: z.string().min(1),
     name: z.string().optional(),
     exact: z.boolean().optional(),
+    nth: NthModifier,
   })
   .strict();
 
@@ -30,6 +40,7 @@ export const TextLocator = z
   .object({
     text: z.string().min(1),
     exact: z.boolean().optional(),
+    nth: NthModifier,
   })
   .strict();
 
@@ -37,6 +48,7 @@ export const LabelLocator = z
   .object({
     label: z.string().min(1),
     exact: z.boolean().optional(),
+    nth: NthModifier,
   })
   .strict();
 
@@ -44,12 +56,14 @@ export const PlaceholderLocator = z
   .object({
     placeholder: z.string().min(1),
     exact: z.boolean().optional(),
+    nth: NthModifier,
   })
   .strict();
 
 export const TestIdLocator = z
   .object({
     testid: z.string().min(1),
+    nth: NthModifier,
   })
   .strict();
 
@@ -57,6 +71,7 @@ export const AltTextLocator = z
   .object({
     alttext: z.string().min(1),
     exact: z.boolean().optional(),
+    nth: NthModifier,
   })
   .strict();
 
@@ -64,6 +79,7 @@ export const TitleLocator = z
   .object({
     title: z.string().min(1),
     exact: z.boolean().optional(),
+    nth: NthModifier,
   })
   .strict();
 
@@ -88,9 +104,21 @@ export type LocatorSpec = z.infer<typeof LocatorSpec>;
  * Resolve a {@link LocatorSpec} into a Playwright {@link Locator} bound
  * to the supplied page. Each variant maps to its canonical Playwright
  * helper: `selector` to `page.locator(...)`, `role` to `page.getByRole`,
- * and so on. Roles and text honor Playwright's `exact` option.
+ * and so on. Roles and text honor Playwright's `exact` option. When the
+ * spec carries `nth`, the resolved locator is narrowed via `.nth(n)` so
+ * multi-match selectors do not trip Playwright's strict mode.
  */
 export function resolveLocator(page: Page, spec: LocatorSpec): Locator {
+  const base = baseLocator(page, spec);
+
+  if ('nth' in spec && typeof spec.nth === 'number') {
+    return base.nth(spec.nth);
+  }
+
+  return base;
+}
+
+function baseLocator(page: Page, spec: LocatorSpec): Locator {
   if ('selector' in spec) {
     return page.locator(spec.selector);
   }
