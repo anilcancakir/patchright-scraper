@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v0.2.1 (2026-04-27)
+
+Step API hardening + discovery. Closes the audit-followups Phase 2
+backlog so the upcoming PHP `AutomationClient` can introspect the
+contract instead of guessing parameter names.
+
+- Every step's zod schema is now `.strict()`. Unknown keys (the audit's
+  `scroll_by({dx, dy})` typo case) now reject with a `ZodError` instead
+  of silently falling through to defaults.
+- `GET /v1/steps` returns rich descriptors per step: `{ name,
+  description, schema }`, where `schema` is the JSON Schema
+  serialization of the step's zod schema. Old name-only consumers see
+  this as a breaking shape change.
+- New `STEPS.md` reference doc covers all 22 primitives in one place.
+- `StepExecutor` interface gains an optional `description` field.
+- Bumps `package.json` to `0.2.1`.
+
 ## v0.2.0 (2026-04-26)
 
 Automation runtime + scenario step API + durable capture pipeline. From
