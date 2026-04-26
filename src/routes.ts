@@ -49,12 +49,12 @@ function buildStepContext(session: ManagedSession, log: (msg: string, meta?: Rec
  *  POST   /v1/sessions/:id/step             execute a registered step
  *  POST   /v1/sessions/:id/screenshot       capture a screenshot
  *  GET    /v1/sessions/:id/state            current session state
- *  GET    /v1/steps                         list registered step names
+ *  GET    /v1/steps                         list registered step descriptors (name, description, JSON schema)
  */
 export function registerRoutes(app: FastifyInstance): void {
   app.get('/v1/health', async () => ({ status: 'ok' }));
 
-  app.get('/v1/steps', async () => ({ status: 'ok', steps: stepRegistry.list() }));
+  app.get('/v1/steps', async () => ({ status: 'ok', steps: stepRegistry.describe() }));
 
   app.post('/v1/scrape', async (request, reply) => {
     const parsed = ScrapeRequestSchema.safeParse(request.body);
