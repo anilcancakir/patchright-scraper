@@ -12,7 +12,7 @@ export const click: StepExecutor = {
     force: z.boolean().default(false),
     button: z.enum(['left', 'right', 'middle']).default('left'),
     click_count: z.number().int().positive().default(1),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { selector: string; timeout_ms: number; force: boolean; button: 'left' | 'right' | 'middle'; click_count: number };
     await ctx.page.click(c.selector, {
@@ -33,7 +33,7 @@ export const type_text: StepExecutor = {
     delay_ms: z.number().int().nonnegative().default(0),
     clear: z.boolean().default(false),
     timeout_ms: z.number().int().positive().default(10_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { selector: string; text: string; delay_ms: number; clear: boolean; timeout_ms: number };
 
@@ -54,7 +54,7 @@ export const press_key: StepExecutor = {
     key: z.string(),
     selector: z.string().optional(),
     delay_ms: z.number().int().nonnegative().default(0),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { key: string; selector?: string; delay_ms: number };
 
@@ -73,7 +73,7 @@ export const select_option: StepExecutor = {
     selector: z.string(),
     values: z.array(z.string()).min(1),
     timeout_ms: z.number().int().positive().default(10_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { selector: string; values: string[]; timeout_ms: number };
     const selected = await ctx.page.selectOption(c.selector, c.values, { timeout: c.timeout_ms });
@@ -87,7 +87,7 @@ export const check: StepExecutor = {
     selector: z.string(),
     state: z.boolean().default(true),
     timeout_ms: z.number().int().positive().default(10_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { selector: string; state: boolean; timeout_ms: number };
 
@@ -109,7 +109,7 @@ export const upload_file: StepExecutor = {
     filename: z.string(),
     mime_type: z.string().default('application/octet-stream'),
     timeout_ms: z.number().int().positive().default(30_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { selector: string; source: 'base64' | 'url'; payload: string; filename: string; mime_type: string; timeout_ms: number };
 

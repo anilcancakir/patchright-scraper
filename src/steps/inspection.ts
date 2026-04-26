@@ -8,7 +8,7 @@ export const screenshot: StepExecutor = {
     selector: z.string().optional(),
     encoding: z.enum(['base64', 'binary']).default('base64'),
     timeout_ms: z.number().int().positive().default(30_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { mode: 'viewport' | 'full' | 'element'; selector?: string; encoding: 'base64' | 'binary'; timeout_ms: number };
 
@@ -45,7 +45,7 @@ export const html: StepExecutor = {
   schema: z.object({
     selector: z.string().optional(),
     timeout_ms: z.number().int().positive().default(10_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { selector?: string; timeout_ms: number };
 
@@ -69,7 +69,7 @@ export const text: StepExecutor = {
   schema: z.object({
     selector: z.string(),
     timeout_ms: z.number().int().positive().default(10_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { selector: string; timeout_ms: number };
     const handle = await ctx.page.waitForSelector(c.selector, { timeout: c.timeout_ms });
@@ -87,7 +87,7 @@ export const attribute: StepExecutor = {
     selector: z.string(),
     name: z.string(),
     timeout_ms: z.number().int().positive().default(10_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { selector: string; name: string; timeout_ms: number };
     const handle = await ctx.page.waitForSelector(c.selector, { timeout: c.timeout_ms });
@@ -105,7 +105,7 @@ export const evaluate_named: StepExecutor = {
     name: z.string(),
     expression: z.string(),
     args: z.array(z.unknown()).default([]),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { name: string; expression: string; args: unknown[] };
     ctx.log('evaluate_named', { name: c.name });
@@ -131,7 +131,7 @@ export const extract_dom_named: StepExecutor = {
     attrs: z.array(z.string()).default([]),
     include_text: z.boolean().default(true),
     timeout_ms: z.number().int().positive().default(10_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { name: string; selector: string; attrs: string[]; include_text: boolean; timeout_ms: number };
 

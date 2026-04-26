@@ -11,7 +11,7 @@ export const goto: StepExecutor = {
     url: z.string().url(),
     wait_until: WaitUntilSchema,
     timeout_ms: z.number().int().positive().max(120_000).optional(),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const { url, wait_until, timeout_ms } = config as { url: string; wait_until: 'load' | 'domcontentloaded' | 'networkidle' | 'commit'; timeout_ms?: number };
     const response = await ctx.page.goto(url, { waitUntil: wait_until, timeout: timeout_ms });
@@ -34,16 +34,16 @@ export const wait_for: StepExecutor = {
       selector: z.string(),
       state: z.enum(['attached', 'detached', 'visible', 'hidden']).default('visible'),
       timeout_ms: z.number().int().positive().default(10_000),
-    }),
+    }).strict(),
     z.object({
       mode: z.literal('load_state'),
       state: z.enum(['load', 'domcontentloaded', 'networkidle']).default('networkidle'),
       timeout_ms: z.number().int().positive().default(10_000),
-    }),
+    }).strict(),
     z.object({
       mode: z.literal('timeout'),
       ms: z.number().int().positive(),
-    }),
+    }).strict(),
   ]),
   async execute(ctx, config) {
     const c = config as
@@ -71,7 +71,7 @@ export const reload: StepExecutor = {
   schema: z.object({
     wait_until: WaitUntilSchema,
     timeout_ms: z.number().int().positive().max(120_000).optional(),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { wait_until: 'load' | 'domcontentloaded' | 'networkidle' | 'commit'; timeout_ms?: number };
     await ctx.page.reload({ waitUntil: c.wait_until, timeout: c.timeout_ms });
@@ -84,7 +84,7 @@ export const go_back: StepExecutor = {
   schema: z.object({
     wait_until: WaitUntilSchema,
     timeout_ms: z.number().int().positive().max(120_000).optional(),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { wait_until: 'load' | 'domcontentloaded' | 'networkidle' | 'commit'; timeout_ms?: number };
     await ctx.page.goBack({ waitUntil: c.wait_until, timeout: c.timeout_ms });

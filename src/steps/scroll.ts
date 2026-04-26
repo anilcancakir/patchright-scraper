@@ -8,7 +8,7 @@ export const scroll_to: StepExecutor = {
     behavior: z.enum(['auto', 'smooth']).default('auto'),
     block: z.enum(['start', 'center', 'end', 'nearest']).default('center'),
     timeout_ms: z.number().int().positive().default(10_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { selector: string; behavior: 'auto' | 'smooth'; block: 'start' | 'center' | 'end' | 'nearest'; timeout_ms: number };
     const handle = await ctx.page.waitForSelector(c.selector, { timeout: c.timeout_ms });
@@ -28,7 +28,7 @@ export const scroll_by: StepExecutor = {
   schema: z.object({
     x: z.number().default(0),
     y: z.number().default(0),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { x: number; y: number };
     await ctx.page.evaluate(({ x, y }) => window.scrollBy(x, y), { x: c.x, y: c.y });
@@ -44,7 +44,7 @@ export const scroll_until_plateau: StepExecutor = {
     settle_ms: z.number().int().nonnegative().default(750),
     plateau_iterations: z.number().int().positive().default(2),
     step_px: z.number().int().positive().default(1200),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { selector?: string; max_iterations: number; settle_ms: number; plateau_iterations: number; step_px: number };
 
@@ -95,7 +95,7 @@ export const scroll_modal: StepExecutor = {
     settle_ms: z.number().int().nonnegative().default(500),
     step_px: z.number().int().positive().default(800),
     timeout_ms: z.number().int().positive().default(10_000),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { modal_selector: string; scroll_selector?: string; max_iterations: number; settle_ms: number; step_px: number; timeout_ms: number };
 
@@ -136,7 +136,7 @@ export const set_viewport: StepExecutor = {
   schema: z.object({
     width: z.number().int().positive(),
     height: z.number().int().positive(),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { width: number; height: number };
     await ctx.page.setViewportSize({ width: c.width, height: c.height });
@@ -148,7 +148,7 @@ export const set_user_agent: StepExecutor = {
   name: 'set_user_agent',
   schema: z.object({
     user_agent: z.string(),
-  }),
+  }).strict(),
   async execute(ctx, config) {
     const c = config as { user_agent: string };
     // Patchright cannot mutate the UA of a live context. Persist the
