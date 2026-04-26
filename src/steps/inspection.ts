@@ -3,6 +3,7 @@ import type { StepExecutor } from './types.js';
 
 export const screenshot: StepExecutor = {
   name: 'screenshot',
+  description: 'Capture a viewport, full page, or single-element screenshot.',
   schema: z.object({
     mode: z.enum(['viewport', 'full', 'element']).default('viewport'),
     selector: z.string().optional(),
@@ -42,6 +43,7 @@ export const screenshot: StepExecutor = {
 
 export const html: StepExecutor = {
   name: 'html',
+  description: 'Return the page or element outerHTML.',
   schema: z.object({
     selector: z.string().optional(),
     timeout_ms: z.number().int().positive().default(10_000),
@@ -66,6 +68,7 @@ export const html: StepExecutor = {
 
 export const text: StepExecutor = {
   name: 'text',
+  description: 'Return the innerText of an element matched by selector.',
   schema: z.object({
     selector: z.string(),
     timeout_ms: z.number().int().positive().default(10_000),
@@ -83,6 +86,7 @@ export const text: StepExecutor = {
 
 export const attribute: StepExecutor = {
   name: 'attribute',
+  description: 'Return a single attribute value for an element matched by selector.',
   schema: z.object({
     selector: z.string(),
     name: z.string(),
@@ -101,6 +105,7 @@ export const attribute: StepExecutor = {
 
 export const evaluate_named: StepExecutor = {
   name: 'evaluate_named',
+  description: 'Evaluate a JavaScript expression in the page and store the named result.',
   schema: z.object({
     name: z.string(),
     expression: z.string(),
@@ -125,6 +130,7 @@ export const evaluate_named: StepExecutor = {
 
 export const extract_dom_named: StepExecutor = {
   name: 'extract_dom_named',
+  description: 'Extract attributes and text from every element matching a selector.',
   schema: z.object({
     name: z.string(),
     selector: z.string(),

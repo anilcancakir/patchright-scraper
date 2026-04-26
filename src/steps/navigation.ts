@@ -7,6 +7,7 @@ const WaitUntilSchema = z
 
 export const goto: StepExecutor = {
   name: 'goto',
+  description: 'Navigate the page to a URL and wait for the chosen lifecycle event.',
   schema: z.object({
     url: z.string().url(),
     wait_until: WaitUntilSchema,
@@ -28,6 +29,7 @@ export const goto: StepExecutor = {
 
 export const wait_for: StepExecutor = {
   name: 'wait_for',
+  description: 'Wait for a selector, a load state, or a timeout before continuing.',
   schema: z.discriminatedUnion('mode', [
     z.object({
       mode: z.literal('selector'),
@@ -68,6 +70,7 @@ export const wait_for: StepExecutor = {
 
 export const reload: StepExecutor = {
   name: 'reload',
+  description: 'Reload the current page and wait for the chosen lifecycle event.',
   schema: z.object({
     wait_until: WaitUntilSchema,
     timeout_ms: z.number().int().positive().max(120_000).optional(),
@@ -81,6 +84,7 @@ export const reload: StepExecutor = {
 
 export const go_back: StepExecutor = {
   name: 'go_back',
+  description: 'Navigate back in the page history and wait for the chosen lifecycle event.',
   schema: z.object({
     wait_until: WaitUntilSchema,
     timeout_ms: z.number().int().positive().max(120_000).optional(),

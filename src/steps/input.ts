@@ -6,6 +6,7 @@ import type { StepExecutor } from './types.js';
 
 export const click: StepExecutor = {
   name: 'click',
+  description: 'Click an element matched by selector.',
   schema: z.object({
     selector: z.string(),
     timeout_ms: z.number().int().positive().default(10_000),
@@ -27,6 +28,7 @@ export const click: StepExecutor = {
 
 export const type_text: StepExecutor = {
   name: 'type_text',
+  description: 'Type text into an input matched by selector.',
   schema: z.object({
     selector: z.string(),
     text: z.string(),
@@ -50,6 +52,7 @@ export const type_text: StepExecutor = {
 
 export const press_key: StepExecutor = {
   name: 'press_key',
+  description: 'Send a single keyboard key (e.g. Enter, Tab) to the page.',
   schema: z.object({
     key: z.string(),
     selector: z.string().optional(),
@@ -69,6 +72,7 @@ export const press_key: StepExecutor = {
 
 export const select_option: StepExecutor = {
   name: 'select_option',
+  description: 'Select one or more options on a select element.',
   schema: z.object({
     selector: z.string(),
     values: z.array(z.string()).min(1),
@@ -83,6 +87,7 @@ export const select_option: StepExecutor = {
 
 export const check: StepExecutor = {
   name: 'check',
+  description: 'Toggle a checkbox or radio input to the desired state.',
   schema: z.object({
     selector: z.string(),
     state: z.boolean().default(true),
@@ -102,6 +107,7 @@ export const check: StepExecutor = {
 
 export const upload_file: StepExecutor = {
   name: 'upload_file',
+  description: 'Upload a base64-encoded file or remote URL to a file input.',
   schema: z.object({
     selector: z.string(),
     source: z.enum(['base64', 'url']),

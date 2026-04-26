@@ -42,5 +42,7 @@ export interface StepExecutor<TConfig = unknown> {
   readonly name: string;
   /** Zod schema validates the incoming config before `execute` runs. */
   readonly schema: ZodSchema<TConfig>;
+  /** Operator-facing one-line description; surfaces on `GET /v1/steps`. */
+  readonly description?: string;
   execute(ctx: StepContext, config: TConfig): Promise<StepResult>;
 }

@@ -3,6 +3,7 @@ import type { StepExecutor } from './types.js';
 
 export const scroll_to: StepExecutor = {
   name: 'scroll_to',
+  description: 'Scroll an element matched by selector into view.',
   schema: z.object({
     selector: z.string(),
     behavior: z.enum(['auto', 'smooth']).default('auto'),
@@ -25,6 +26,7 @@ export const scroll_to: StepExecutor = {
 
 export const scroll_by: StepExecutor = {
   name: 'scroll_by',
+  description: 'Scroll the page by a pixel offset.',
   schema: z.object({
     x: z.number().default(0),
     y: z.number().default(0),
@@ -38,6 +40,7 @@ export const scroll_by: StepExecutor = {
 
 export const scroll_until_plateau: StepExecutor = {
   name: 'scroll_until_plateau',
+  description: 'Scroll repeatedly until the page height stops growing.',
   schema: z.object({
     selector: z.string().optional(),
     max_iterations: z.number().int().positive().default(20),
@@ -88,6 +91,7 @@ export const scroll_until_plateau: StepExecutor = {
 
 export const scroll_modal: StepExecutor = {
   name: 'scroll_modal',
+  description: 'Scroll inside a modal until its inner content stops growing.',
   schema: z.object({
     modal_selector: z.string(),
     scroll_selector: z.string().optional(),
@@ -133,6 +137,7 @@ export const scroll_modal: StepExecutor = {
 
 export const set_viewport: StepExecutor = {
   name: 'set_viewport',
+  description: 'Resize the page viewport.',
   schema: z.object({
     width: z.number().int().positive(),
     height: z.number().int().positive(),
@@ -146,6 +151,7 @@ export const set_viewport: StepExecutor = {
 
 export const set_user_agent: StepExecutor = {
   name: 'set_user_agent',
+  description: 'Persist a user-agent override for the next session boot.',
   schema: z.object({
     user_agent: z.string(),
   }).strict(),
