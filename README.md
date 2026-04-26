@@ -22,7 +22,7 @@ Built for `linux/amd64`; CI publishes `anilcancakir/patchright-scraper:vX.Y.Z` a
 | POST   | `/v1/sessions/:id/screenshot`       | capture a screenshot                                         |
 | GET    | `/v1/sessions/:id/state`            | current state (`active` / `idle` / `login_detected` / ...)   |
 
-The `/step` endpoint dispatches to a registry of step executors. The set ships with the image; new primitives drop into `src/steps/`.
+The `/step` endpoint dispatches to a registry of step executors. The set ships with the image; new primitives drop into `src/steps/`. Every parameter for every step is documented in [STEPS.md](STEPS.md); `GET /v1/steps` returns the same schemas live as JSON Schema descriptors so callers can introspect the contract at runtime.
 
 ## Modes at a glance
 
