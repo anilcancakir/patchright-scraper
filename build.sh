@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 #
-# Build the kodizm/patchright-scraper image for linux/amd64 and ship it
-# to the remote Docker host configured via KODIZM_DOCKER_HOST.
+# Local-dev build for the patchright-scraper image. Public Docker Hub
+# releases happen via .github/workflows/release-docker.yml on every
+# v*.*.* tag push; this script only covers the LAN-dev shortcut where
+# you want to iterate without going through GitHub.
 #
 # Usage:
-#   KODIZM_DOCKER_HOST=root@192.168.68.155 bash docker/patchright-scraper/build.sh
+#   bash build.sh                                 # docker build only
+#   KODIZM_DOCKER_HOST=root@192.168.68.155 \
+#     bash build.sh                               # build + ssh load to LAN host
 
 set -euo pipefail
 
