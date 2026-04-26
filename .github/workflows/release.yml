@@ -1,0 +1,42 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  create-release:
+    name: Create release
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build changelog
+        id: github_changelog
+        run: |
+          previous_tag=$(git tag --sort=-creatordate | sed -n '2p')
+          if [ -n "$previous_tag" ]; then
+            changelog=$(git log "$previous_tag"..HEAD --no-merges --oneline)
+          else
+            changelog=$(git log --no-merges --oneline)
+          fi
+          {
+            echo "changelog<<EOF"
+            echo "$changelog"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: ${{ steps.github_changelog.outputs.changelog }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
