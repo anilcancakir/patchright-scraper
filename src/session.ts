@@ -1,27 +1,36 @@
-import { chromium, type BrowserContext } from 'patchright';
+import { chromium, type BrowserContext, type Page } from 'patchright';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SessionCreate } from './types.js';
+import type { SessionState } from './steps/types.js';
 
 interface ManagedSession {
   id: string;
   context: BrowserContext;
+  page: Page;
   profilePath: string;
   createdAt: number;
   lastUsedAt: number;
+  state: SessionState;
+  loginSignature?: RegExp;
+  identityHash?: string;
 }
 
 const sessions = new Map<string, ManagedSession>();
-const PROFILE_ROOT = process.env.PROFILE_ROOT ?? '/data/profiles';
+const PROFILE_ROOT = process.env.PROFILE_ROOT ?? process.env.PROFILE_DIR ?? '/data/profiles';
 const IDLE_TIMEOUT_MS = Number(process.env.SESSION_IDLE_MS ?? 10 * 60 * 1000);
 
+export interface CreateSessionInput extends SessionCreate {
+  loginSignature?: string;
+  identityHash?: string;
+}
+
 /**
- * Open (or look up) a long-lived persistent context. Returning the
- * managed wrapper rather than just the BrowserContext lets the
- * routes layer keep timestamps current.
+ * Open (or look up) a long-lived persistent context. The page handle
+ * lives on the session so step executors share it across calls.
  */
-export async function createSession(input: SessionCreate): Promise<ManagedSession> {
+export async function createSession(input: CreateSessionInput): Promise<ManagedSession> {
   const id = input.sessionId ?? randomUUID();
 
   const existing = sessions.get(id);
@@ -31,24 +40,31 @@ export async function createSession(input: SessionCreate): Promise<ManagedSessio
     return existing;
   }
 
-  const profilePath = join(PROFILE_ROOT, id);
+  const subdir = input.identityHash ?? id;
+  const profilePath = join(PROFILE_ROOT, subdir);
   mkdirSync(profilePath, { recursive: true });
 
   const context = await chromium.launchPersistentContext(profilePath, {
     channel: 'chrome',
-    headless: true,
+    headless: process.env.DISPLAY ? false : true,
     proxy: input.proxy,
     userAgent: input.userAgent,
     locale: input.locale,
     viewport: input.viewport ?? null,
   });
 
+  const page = context.pages()[0] ?? (await context.newPage());
+
   const session: ManagedSession = {
     id,
     context,
+    page,
     profilePath,
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
+    state: 'active',
+    loginSignature: input.loginSignature ? new RegExp(input.loginSignature) : undefined,
+    identityHash: input.identityHash,
   };
 
   sessions.set(id, session);
@@ -71,6 +87,8 @@ export async function destroySession(id: string): Promise<boolean> {
     return false;
   }
 
+  session.state = 'closed';
+
   try {
     await session.context.close();
   } finally {
@@ -80,12 +98,34 @@ export async function destroySession(id: string): Promise<boolean> {
   return true;
 }
 
-export function listSessions(): Array<{ id: string; createdAt: number; lastUsedAt: number }> {
+export function listSessions(): Array<{ id: string; createdAt: number; lastUsedAt: number; state: SessionState }> {
   return Array.from(sessions.values()).map((s) => ({
     id: s.id,
     createdAt: s.createdAt,
     lastUsedAt: s.lastUsedAt,
+    state: s.state,
   }));
+}
+
+/**
+ * Compare the page's current url against the session's login signature
+ * and flip the state when it matches. Called after every step / navigate.
+ */
+export function refreshState(session: ManagedSession): SessionState {
+  if (session.state === 'closed' || session.state === 'errored') {
+    return session.state;
+  }
+
+  if (session.loginSignature !== undefined) {
+    const url = session.page.url();
+    if (session.loginSignature.test(url)) {
+      session.state = 'login_detected';
+      return session.state;
+    }
+  }
+
+  session.state = 'active';
+  return session.state;
 }
 
 /**
@@ -101,6 +141,8 @@ export function startIdleReaper(): NodeJS.Timeout {
         continue;
       }
 
+      session.state = 'idle';
+
       try {
         await session.context.close();
       } catch {
@@ -110,3 +152,5 @@ export function startIdleReaper(): NodeJS.Timeout {
     }
   }, 30_000);
 }
+
+export type { ManagedSession };
