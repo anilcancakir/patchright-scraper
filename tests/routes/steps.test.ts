@@ -6,10 +6,9 @@ import '../../src/steps/index.js';
 import { stepRegistry } from '../../src/steps/registry.js';
 
 /**
- * Pins the new GET /v1/steps payload shape: every entry now carries
- * the JSON Schema for its zod schema plus an operator-facing
- * description. Phase 2 of the audit-followups plan ships this contract
- * for the PHP AutomationClient.
+ * Pins the `GET /v1/steps` payload shape: every entry carries the
+ * Playwright-shaped JSON Schema for its zod schema plus an operator
+ * description. The PHP AutomationClient introspects this contract.
  */
 let app: Awaited<ReturnType<typeof buildApp>>;
 
@@ -45,6 +44,6 @@ describe('GET /v1/steps', () => {
     expect(goto).toBeDefined();
     expect(goto?.description).toContain('Navigate');
     expect(goto?.schema.properties.url).toBeDefined();
-    expect(goto?.schema.properties.wait_until).toBeDefined();
+    expect(goto?.schema.properties.waitUntil).toBeDefined();
   });
 });

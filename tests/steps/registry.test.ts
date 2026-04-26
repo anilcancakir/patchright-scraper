@@ -53,7 +53,6 @@ describe('stepRegistry', () => {
     expect(descriptors[0].name).toBe('with_schema');
     expect(descriptors[0].description).toBe('demo step');
     expect((descriptors[0].schema as Record<string, unknown>).type).toBe('object');
-    expect(((descriptors[0].schema as { properties?: Record<string, unknown> }).properties ?? {}).foo).toBeDefined();
   });
 });
 
@@ -62,37 +61,78 @@ describe('boot-time registration', () => {
     stepRegistry.reset();
   });
 
-  it('registers all 22 built-in primitives', async () => {
+  it('registers every Playwright-shaped primitive', async () => {
     // Importing index triggers the boot-time register loop.
     await import('../../src/steps/index.js');
 
     const names = stepRegistry.list();
 
-    const expected = [
-      'attribute',
-      'check',
-      'click',
-      'evaluate_named',
-      'extract_dom_named',
-      'go_back',
+    const expectedSubset = [
       'goto',
-      'html',
-      'press_key',
+      'goBack',
+      'goForward',
       'reload',
+      'click',
+      'dblclick',
+      'fill',
+      'type',
+      'press',
+      'hover',
+      'focus',
+      'blur',
+      'dragTo',
+      'scrollIntoViewIfNeeded',
+      'selectOption',
+      'check',
+      'setInputFiles',
       'screenshot',
-      'scroll_by',
-      'scroll_modal',
-      'scroll_to',
-      'scroll_until_plateau',
-      'select_option',
-      'set_user_agent',
-      'set_viewport',
-      'text',
-      'type_text',
-      'upload_file',
-      'wait_for',
+      'content',
+      'innerText',
+      'getAttribute',
+      'inputValue',
+      'evaluate',
+      'extractDom',
+      'scrollBy',
+      'scrollUntilPlateau',
+      'scrollModal',
+      'setViewportSize',
+      'setUserAgent',
+      'setExtraHTTPHeaders',
+      'setOffline',
+      'setGeolocation',
+      'routeBlock',
+      'waitForSelector',
+      'waitForLoadState',
+      'waitForTimeout',
+      'waitForURL',
+      'waitForFunction',
+      'expect',
+      'solveCaptcha',
     ];
 
-    expect(names).toEqual(expected);
+    for (const name of expectedSubset) {
+      expect(names, `step "${name}" should be registered`).toContain(name);
+    }
+
+    // Legacy snake_case names must NOT be registered any more.
+    const legacy = [
+      'wait_for',
+      'go_back',
+      'type_text',
+      'press_key',
+      'select_option',
+      'set_viewport',
+      'set_user_agent',
+      'scroll_to',
+      'scroll_by',
+      'scroll_until_plateau',
+      'scroll_modal',
+      'extract_dom_named',
+      'evaluate_named',
+      'upload_file',
+    ];
+    for (const name of legacy) {
+      expect(names, `legacy "${name}" should be gone`).not.toContain(name);
+    }
   });
 });

@@ -1,95 +1,118 @@
 import { describe, expect, it, vi } from 'vitest';
+import { scrollBy, scrollModal, scrollUntilPlateau } from '../../src/steps/scroll.js';
 import {
-  scroll_by,
-  scroll_modal,
-  scroll_to,
-  scroll_until_plateau,
-  set_user_agent,
-  set_viewport,
-} from '../../src/steps/scroll.js';
-import { makeCtx, makeHandle, makePage } from './_helpers.js';
+  routeBlock,
+  setExtraHTTPHeaders,
+  setGeolocation,
+  setOffline,
+  setUserAgent,
+  setViewportSize,
+} from '../../src/steps/page.js';
+import { makeContext, makeCtx, makeLocator, makePage } from './_helpers.js';
 
-describe('scroll + viewport primitives', () => {
-  it('scroll_to scrolls the resolved handle into view', async () => {
-    const handleEval = vi.fn(async () => undefined);
-    const page = makePage({ waitForSelector: vi.fn(async () => makeHandle({ evaluate: handleEval }) as never) });
+describe('scroll + page primitives', () => {
+  it('scrollBy calls window.scrollBy via page.evaluate', async () => {
+    const evalSpy = vi.fn(async () => undefined);
+    const page = makePage({ evaluate: evalSpy as never });
     const { ctx } = makeCtx({ page });
 
-    const result = await scroll_to.execute(ctx, {
-      selector: '#footer',
-      behavior: 'smooth',
-      block: 'center',
-      timeout_ms: 5_000,
-    });
+    await scrollBy.execute(ctx, { x: 0, y: 800 });
 
-    expect(result.ok).toBe(true);
-    expect(handleEval).toHaveBeenCalled();
+    expect(evalSpy).toHaveBeenCalled();
   });
 
-  it('scroll_by calls window.scrollBy via page.evaluate', async () => {
-    const evaluate = vi.fn(async () => undefined);
-    const page = makePage({ evaluate: evaluate as never });
-    const { ctx } = makeCtx({ page });
-
-    await scroll_by.execute(ctx, { x: 0, y: 800 });
-
-    expect(evaluate).toHaveBeenCalled();
-  });
-
-  it('scroll_until_plateau stops when scrollHeight stabilises', async () => {
-    // Three calls: 1000, 1500, 1500 (plateau hit on the 3rd at default plateau_iterations=2 -> needs 2 hits).
+  it('scrollUntilPlateau stops when scrollHeight stabilises', async () => {
     const heights = [1000, 1500, 1500, 1500];
     let i = 0;
-    const evaluate = vi.fn(async () => heights[i++]);
-    const page = makePage({ evaluate: evaluate as never });
+    const evalSpy = vi.fn(async () => heights[i++]);
+    const page = makePage({ evaluate: evalSpy as never });
     const { ctx } = makeCtx({ page });
 
-    const result = await scroll_until_plateau.execute(ctx, {
-      max_iterations: 10,
-      settle_ms: 0,
-      plateau_iterations: 2,
-      step_px: 800,
+    const result = await scrollUntilPlateau.execute(ctx, {
+      maxIterations: 10,
+      settleMs: 0,
+      plateauIterations: 2,
+      stepPx: 800,
     });
 
     expect(result.ok).toBe(true);
     expect((result.output as { plateau: boolean }).plateau).toBe(true);
   });
 
-  it('scroll_modal returns plateau when the modal stops growing', async () => {
+  it('scrollModal returns plateau when the modal stops growing', async () => {
     const heights = [400, 500, 500];
     let i = 0;
     const page = makePage({
-      waitForSelector: vi.fn(async () => makeHandle() as never),
+      waitForSelector: vi.fn(async () => makeLocator() as never),
       evaluate: vi.fn(async () => heights[i++]) as never,
     });
     const { ctx } = makeCtx({ page });
 
-    const result = await scroll_modal.execute(ctx, {
-      modal_selector: '.modal',
-      max_iterations: 5,
-      settle_ms: 0,
-      step_px: 200,
-      timeout_ms: 5_000,
+    const result = await scrollModal.execute(ctx, {
+      modalSelector: '.modal',
+      maxIterations: 5,
+      settleMs: 0,
+      stepPx: 200,
+      timeout: 5_000,
     });
 
     expect(result.ok).toBe(true);
     expect((result.output as { plateau: boolean }).plateau).toBe(true);
   });
 
-  it('set_viewport calls page.setViewportSize', async () => {
+  it('setViewportSize calls page.setViewportSize', async () => {
     const { ctx, page } = makeCtx();
 
-    await set_viewport.execute(ctx, { width: 1280, height: 720 });
+    await setViewportSize.execute(ctx, { width: 1280, height: 720 });
 
     expect(page.setViewportSize).toHaveBeenCalledWith({ width: 1280, height: 720 });
   });
 
-  it('set_user_agent records the override but flags it deferred', async () => {
+  it('setUserAgent records the override but flags it deferred', async () => {
     const { ctx } = makeCtx();
 
-    const result = await set_user_agent.execute(ctx, { user_agent: 'Mozilla/5.0 (custom)' });
+    const result = await setUserAgent.execute(ctx, { userAgent: 'Mozilla/5.0 (custom)' });
 
     expect(result.ok).toBe(true);
-    expect((result.output as { applied_immediately: boolean }).applied_immediately).toBe(false);
+    expect((result.output as { appliedImmediately: boolean }).appliedImmediately).toBe(false);
+  });
+
+  it('setExtraHTTPHeaders forwards to context.setExtraHTTPHeaders', async () => {
+    const context = makeContext();
+    const { ctx } = makeCtx({ context });
+
+    await setExtraHTTPHeaders.execute(ctx, { headers: { 'X-Test': '1' } });
+
+    expect(context.setExtraHTTPHeaders).toHaveBeenCalledWith({ 'X-Test': '1' });
+  });
+
+  it('setOffline toggles context offline mode', async () => {
+    const context = makeContext();
+    const { ctx } = makeCtx({ context });
+
+    await setOffline.execute(ctx, { offline: true });
+
+    expect(context.setOffline).toHaveBeenCalledWith(true);
+  });
+
+  it('setGeolocation grants permission and sets coordinates', async () => {
+    const context = makeContext();
+    const { ctx } = makeCtx({ context });
+
+    await setGeolocation.execute(ctx, { latitude: 41, longitude: 29 });
+
+    expect(context.grantPermissions).toHaveBeenCalledWith(['geolocation']);
+    expect(context.setGeolocation).toHaveBeenCalledWith(
+      expect.objectContaining({ latitude: 41, longitude: 29 }),
+    );
+  });
+
+  it('routeBlock registers an abort handler per pattern', async () => {
+    const context = makeContext();
+    const { ctx } = makeCtx({ context });
+
+    await routeBlock.execute(ctx, { patterns: ['**/*.png', '**/analytics.js'] });
+
+    expect(context.route).toHaveBeenCalledTimes(2);
   });
 });

@@ -8,7 +8,7 @@ vi.mock('../../src/session.js', async () => {
 });
 
 import { registerRoutes } from '../../src/routes.js';
-import { __setStub, __resetStub } from './_session-stub.js';
+import { __resetStub, __setStub } from './_session-stub.js';
 
 let app: Awaited<ReturnType<typeof buildApp>>;
 
@@ -73,7 +73,7 @@ describe('POST /v1/sessions/:id/step', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/v1/sessions/step-test/step',
-      payload: { type: 'goto', config: { url: 'https://example.org/landing', wait_until: 'load' } },
+      payload: { type: 'goto', config: { url: 'https://example.org/landing', waitUntil: 'load' } },
     });
 
     expect(response.statusCode).toBe(200);

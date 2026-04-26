@@ -1,93 +1,128 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  attribute,
-  evaluate_named,
-  extract_dom_named,
-  html,
+  content,
+  evaluate,
+  extractDom,
+  getAttribute,
+  innerText,
+  inputValue,
   screenshot,
-  text,
 } from '../../src/steps/inspection.js';
-import { makeCtx, makeHandle, makePage } from './_helpers.js';
+import { makeCtx, makeLocator, makePage } from './_helpers.js';
 
-describe('inspection primitives', () => {
+describe('inspection primitives (Playwright shape)', () => {
   it('screenshot returns base64 by default', async () => {
     const page = makePage({ screenshot: vi.fn(async () => Buffer.from('PNG-DATA')) });
     const { ctx } = makeCtx({ page });
 
-    const result = await screenshot.execute(ctx, { mode: 'viewport', encoding: 'base64', timeout_ms: 5_000 });
+    const result = await screenshot.execute(ctx, {
+      mode: 'viewport',
+      encoding: 'base64',
+      timeout: 5_000,
+    });
 
     expect(result.ok).toBe(true);
     expect(result.screenshot).toBe(Buffer.from('PNG-DATA').toString('base64'));
     expect((result.output as { bytes: number }).bytes).toBe(8);
   });
 
-  it('screenshot in element mode requires a selector', async () => {
+  it('screenshot in element mode requires a locator', async () => {
     const { ctx } = makeCtx();
 
-    const result = await screenshot.execute(ctx, { mode: 'element', encoding: 'base64', timeout_ms: 5_000 });
+    const result = await screenshot.execute(ctx, {
+      mode: 'element',
+      encoding: 'base64',
+      timeout: 5_000,
+    });
 
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/requires selector/);
+    expect(result.error).toMatch(/requires a locator/);
   });
 
-  it('html returns full document when no selector', async () => {
+  it('content returns full document when no locator', async () => {
     const page = makePage({ content: vi.fn(async () => '<html><body>hi</body></html>') });
     const { ctx } = makeCtx({ page });
 
-    const result = await html.execute(ctx, { timeout_ms: 5_000 });
+    const result = await content.execute(ctx, { timeout: 5_000 });
 
     expect(result.ok).toBe(true);
     expect((result.output as { html: string }).html).toContain('hi');
   });
 
-  it('text returns innerText of the matched element', async () => {
-    const handle = makeHandle({ innerText: vi.fn(async () => 'Welcome') });
-    const page = makePage({ waitForSelector: vi.fn(async () => handle as never) });
+  it('innerText returns the locator innerText', async () => {
+    const locator = makeLocator({ innerText: vi.fn(async () => 'Welcome') });
+    const page = makePage({ locator: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    const result = await text.execute(ctx, { selector: 'h1', timeout_ms: 5_000 });
+    const result = await innerText.execute(ctx, {
+      locator: { selector: 'h1' },
+      timeout: 5_000,
+    });
 
     expect(result.ok).toBe(true);
     expect((result.output as { text: string }).text).toBe('Welcome');
   });
 
-  it('attribute returns getAttribute value', async () => {
-    const handle = makeHandle({ getAttribute: vi.fn(async () => 'submit') });
-    const page = makePage({ waitForSelector: vi.fn(async () => handle as never) });
+  it('getAttribute reads the attribute via locator.getAttribute', async () => {
+    const locator = makeLocator({ getAttribute: vi.fn(async () => 'submit') });
+    const page = makePage({ locator: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    const result = await attribute.execute(ctx, { selector: 'button', name: 'type', timeout_ms: 5_000 });
+    const result = await getAttribute.execute(ctx, {
+      locator: { selector: 'button' },
+      name: 'type',
+      timeout: 5_000,
+    });
 
     expect(result.ok).toBe(true);
     expect((result.output as { value: string }).value).toBe('submit');
   });
 
-  it('evaluate_named runs the expression via page.evaluate', async () => {
-    const evaluate = vi.fn(async () => 42);
-    const page = makePage({ evaluate: evaluate as never });
+  it('inputValue returns the input value', async () => {
+    const locator = makeLocator({ inputValue: vi.fn(async () => 'foo@bar') });
+    const page = makePage({ getByTestId: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    const result = await evaluate_named.execute(ctx, { name: 'sum', expression: 'function(a,b){return a+b}', args: [1, 2] });
+    const result = await inputValue.execute(ctx, {
+      locator: { testid: 'email' },
+      timeout: 5_000,
+    });
+
+    expect((result.output as { value: string }).value).toBe('foo@bar');
+  });
+
+  it('evaluate runs the expression via page.evaluate', async () => {
+    const evalSpy = vi.fn(async () => 42);
+    const page = makePage({ evaluate: evalSpy as never });
+    const { ctx } = makeCtx({ page });
+
+    const result = await evaluate.execute(ctx, {
+      expression: 'function(a,b){return a+b}',
+      args: [1, 2],
+    });
 
     expect(result.ok).toBe(true);
-    expect(evaluate).toHaveBeenCalled();
+    expect(evalSpy).toHaveBeenCalled();
     expect((result.output as { result: number }).result).toBe(42);
   });
 
-  it('extract_dom_named returns mapped rows', async () => {
-    const evaluate = vi.fn(async () => [{ href: '/a', text: 'A' }, { href: '/b', text: 'B' }]);
+  it('extractDom returns mapped rows', async () => {
+    const evalSpy = vi.fn(async () => [
+      { href: '/a', text: 'A' },
+      { href: '/b', text: 'B' },
+    ]);
     const page = makePage({
-      waitForSelector: vi.fn(async () => makeHandle() as never),
-      evaluate: evaluate as never,
+      waitForSelector: vi.fn(async () => makeLocator() as never),
+      evaluate: evalSpy as never,
     });
     const { ctx } = makeCtx({ page });
 
-    const result = await extract_dom_named.execute(ctx, {
+    const result = await extractDom.execute(ctx, {
       name: 'links',
       selector: 'a',
       attrs: ['href'],
-      include_text: true,
-      timeout_ms: 5_000,
+      includeText: true,
+      timeout: 5_000,
     });
 
     expect(result.ok).toBe(true);

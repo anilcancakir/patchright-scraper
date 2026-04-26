@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { goto, wait_for } from '../../src/steps/navigation.js';
-import { click } from '../../src/steps/input.js';
-import { html } from '../../src/steps/inspection.js';
-import { scroll_by } from '../../src/steps/scroll.js';
+import { goto } from '../../src/steps/navigation.js';
+import { click, fill } from '../../src/steps/input.js';
+import { content, screenshot } from '../../src/steps/inspection.js';
+import { scrollBy } from '../../src/steps/scroll.js';
+import { expect as expectStep } from '../../src/steps/expect.js';
 
 /**
- * Pins the strict-mode contract for every step schema. Phase 2 of the
- * audit-followups plan turns silent typo passes (where unknown keys
- * silently fell through to defaults) into a clean ZodError so the
- * PHP AutomationClient gets a loud signal instead of a no-op.
+ * Pins the strict-mode contract: every step schema rejects unknown keys
+ * so the PHP AutomationClient gets a loud ZodError instead of a silent
+ * default-fall-through. The audit-followups regression target.
  */
 describe('step schemas reject unknown keys', () => {
   it('goto rejects an unknown key', () => {
-    const result = goto.schema.safeParse({ url: 'https://example.org/', wait_until: 'load', extra: 1 });
+    const result = goto.schema.safeParse({
+      url: 'https://example.org/',
+      waitUntil: 'load',
+      extra: 1,
+    });
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -20,26 +24,33 @@ describe('step schemas reject unknown keys', () => {
     }
   });
 
-  it('wait_for rejects an unknown key inside the load_state branch', () => {
-    const result = wait_for.schema.safeParse({ mode: 'load_state', state: 'load', extra: 1 });
-
-    expect(result.success).toBe(false);
-  });
-
   it('click rejects an unknown key', () => {
-    const result = click.schema.safeParse({ selector: '#go', dx: 5 });
+    const result = click.schema.safeParse({
+      locator: { selector: '#go' },
+      dx: 5,
+    });
 
     expect(result.success).toBe(false);
   });
 
-  it('html rejects an unknown key', () => {
-    const result = html.schema.safeParse({ extra: 1 });
+  it('fill rejects an unknown key', () => {
+    const result = fill.schema.safeParse({
+      locator: { testid: 'email' },
+      value: 'a@b.test',
+      extra: 1,
+    });
 
     expect(result.success).toBe(false);
   });
 
-  it('scroll_by rejects an unknown key (the audit case)', () => {
-    const result = scroll_by.schema.safeParse({ x: 0, y: 0, dx: 50, dy: 50 });
+  it('content rejects an unknown key', () => {
+    const result = content.schema.safeParse({ extra: 1 });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('scrollBy rejects an unknown key (the audit case)', () => {
+    const result = scrollBy.schema.safeParse({ x: 0, y: 0, dx: 50, dy: 50 });
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -48,7 +59,18 @@ describe('step schemas reject unknown keys', () => {
   });
 
   it('valid keys still pass', () => {
-    expect(goto.schema.safeParse({ url: 'https://example.org/', wait_until: 'load' }).success).toBe(true);
-    expect(scroll_by.schema.safeParse({ x: 0, y: 100 }).success).toBe(true);
+    expect(goto.schema.safeParse({ url: 'https://example.org/', waitUntil: 'load' }).success).toBe(
+      true,
+    );
+    expect(scrollBy.schema.safeParse({ x: 0, y: 100 }).success).toBe(true);
+    expect(
+      click.schema.safeParse({ locator: { selector: '.a' } }).success,
+    ).toBe(true);
+    expect(
+      expectStep.schema.safeParse({ assertion: 'toBeVisible', locator: { testid: 'x' } }).success,
+    ).toBe(true);
+    expect(
+      screenshot.schema.safeParse({ mode: 'viewport', encoding: 'base64' }).success,
+    ).toBe(true);
   });
 });

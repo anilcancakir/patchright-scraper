@@ -5,36 +5,108 @@
  * Custom plugins: drop a TypeScript file beside the category modules
  * that exports a `StepExecutor`, then add a `stepRegistry.register(...)`
  * call here. The image must be rebuilt for the new step to ship.
+ *
+ * Step shape mirrors Playwright's API one-to-one (camelCase names + a
+ * single `locator` block per element-targeting step) so anyone fluent
+ * in Playwright can author scenarios with no translation. Scraping
+ * extensions that have no Playwright peer (extractDom, scrollUntilPlateau,
+ * scrollModal, evaluate-with-name, solveCaptcha) keep their semantic
+ * names and live alongside the canonical primitives.
  */
 import { stepRegistry } from './registry.js';
-import { go_back, goto, reload, wait_for } from './navigation.js';
-import { check, click, press_key, select_option, type_text, upload_file } from './input.js';
-import { attribute, evaluate_named, extract_dom_named, html, screenshot, text } from './inspection.js';
-import { scroll_by, scroll_modal, scroll_to, scroll_until_plateau, set_user_agent, set_viewport } from './scroll.js';
+import { goto, goBack, goForward, reload } from './navigation.js';
+import {
+  blur,
+  check,
+  click,
+  dblclick,
+  dragTo,
+  fill,
+  focus,
+  hover,
+  press,
+  scrollIntoViewIfNeeded,
+  selectOption,
+  setInputFiles,
+  type,
+} from './input.js';
+import {
+  content,
+  evaluate,
+  extractDom,
+  getAttribute,
+  innerText,
+  inputValue,
+  screenshot,
+} from './inspection.js';
+import { scrollBy, scrollModal, scrollUntilPlateau } from './scroll.js';
+import {
+  routeBlock,
+  setExtraHTTPHeaders,
+  setGeolocation,
+  setOffline,
+  setUserAgent,
+  setViewportSize,
+} from './page.js';
+import {
+  waitForFunction,
+  waitForLoadState,
+  waitForSelector,
+  waitForTimeout,
+  waitForURL,
+} from './wait.js';
+import { expect } from './expect.js';
+import { solveCaptcha } from './captcha.js';
 
 const builtIns = [
+  // Navigation
   goto,
-  wait_for,
   reload,
-  go_back,
+  goBack,
+  goForward,
+  // Waits
+  waitForSelector,
+  waitForLoadState,
+  waitForTimeout,
+  waitForURL,
+  waitForFunction,
+  // Actions
   click,
-  type_text,
-  press_key,
-  select_option,
+  dblclick,
+  fill,
+  type,
+  press,
+  hover,
+  focus,
+  blur,
+  dragTo,
+  scrollIntoViewIfNeeded,
+  selectOption,
   check,
-  upload_file,
+  setInputFiles,
+  // Reads
   screenshot,
-  html,
-  text,
-  attribute,
-  evaluate_named,
-  extract_dom_named,
-  scroll_to,
-  scroll_by,
-  scroll_until_plateau,
-  scroll_modal,
-  set_viewport,
-  set_user_agent,
+  content,
+  innerText,
+  getAttribute,
+  inputValue,
+  evaluate,
+  extractDom,
+  // Scroll helpers
+  scrollBy,
+  scrollUntilPlateau,
+  scrollModal,
+  // Page-level config
+  setViewportSize,
+  setUserAgent,
+  setExtraHTTPHeaders,
+  setOffline,
+  setGeolocation,
+  routeBlock,
+  // Assertions (scenario guards)
+  expect,
+  // Anti-bot helpers
+  solveCaptcha,
 ];
 
 for (const executor of builtIns) {
@@ -42,4 +114,4 @@ for (const executor of builtIns) {
 }
 
 export { stepRegistry } from './registry.js';
-export type { StepExecutor, StepContext, StepResult, SessionState } from './types.js';
+export type { SessionState, StepContext, StepExecutor, StepResult } from './types.js';

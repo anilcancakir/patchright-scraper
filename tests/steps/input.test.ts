@@ -1,84 +1,188 @@
-import { describe, expect, it } from 'vitest';
-import { check, click, press_key, select_option, type_text, upload_file } from '../../src/steps/input.js';
-import { makeCtx } from './_helpers.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  blur,
+  check,
+  click,
+  dblclick,
+  dragTo,
+  fill,
+  focus,
+  hover,
+  press,
+  scrollIntoViewIfNeeded,
+  selectOption,
+  setInputFiles,
+  type,
+} from '../../src/steps/input.js';
+import { makeCtx, makeLocator, makePage } from './_helpers.js';
 
-describe('input primitives', () => {
-  it('click clicks with the given selector + button', async () => {
-    const { ctx, page } = makeCtx();
+describe('input primitives (Playwright shape)', () => {
+  it('click resolves locator and clicks with options', async () => {
+    const locator = makeLocator();
+    const page = makePage({ getByTestId: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
 
     await click.execute(ctx, {
-      selector: 'a.cta',
-      timeout_ms: 5_000,
-      force: false,
+      locator: { testid: 'cta' },
       button: 'left',
-      click_count: 1,
+      clickCount: 1,
+      delay: 0,
+      force: false,
+      timeout: 5_000,
     });
 
-    expect(page.click).toHaveBeenCalledWith('a.cta', expect.objectContaining({ button: 'left', clickCount: 1 }));
+    expect(page.getByTestId).toHaveBeenCalledWith('cta');
+    expect(locator.click).toHaveBeenCalledWith(
+      expect.objectContaining({ button: 'left', clickCount: 1 }),
+    );
   });
 
-  it('type_text fills empty first when clear=true', async () => {
-    const { ctx, page } = makeCtx();
+  it('dblclick double-clicks the locator', async () => {
+    const locator = makeLocator();
+    const page = makePage({ locator: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
 
-    await type_text.execute(ctx, {
-      selector: 'input[name=q]',
+    await dblclick.execute(ctx, {
+      locator: { selector: '.row' },
+      button: 'left',
+      delay: 0,
+      force: false,
+      timeout: 5_000,
+    });
+
+    expect(locator.dblclick).toHaveBeenCalled();
+  });
+
+  it('fill writes the value via locator.fill (instant)', async () => {
+    const locator = makeLocator();
+    const page = makePage({ getByLabel: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
+
+    await fill.execute(ctx, {
+      locator: { label: 'Email' },
+      value: 'a@b.test',
+      timeout: 5_000,
+    });
+
+    expect(locator.fill).toHaveBeenCalledWith('a@b.test', expect.objectContaining({ timeout: 5_000 }));
+  });
+
+  it('type clears first and types per character', async () => {
+    const locator = makeLocator();
+    const page = makePage({ getByPlaceholder: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
+
+    await type.execute(ctx, {
+      locator: { placeholder: 'Search' },
       text: 'hello',
-      delay_ms: 0,
+      delay: 0,
       clear: true,
-      timeout_ms: 5_000,
+      timeout: 5_000,
     });
 
-    expect(page.fill).toHaveBeenCalledWith('input[name=q]', '', expect.any(Object));
-    expect(page.type).toHaveBeenCalledWith('input[name=q]', 'hello', expect.objectContaining({ delay: 0 }));
+    expect(locator.fill).toHaveBeenCalledWith('', expect.any(Object));
+    expect(locator.type).toHaveBeenCalledWith('hello', expect.objectContaining({ delay: 0 }));
   });
 
-  it('press_key uses page.press when selector given, keyboard.press otherwise', async () => {
-    const { ctx, page } = makeCtx();
+  it('press uses locator.press when locator given, keyboard.press otherwise', async () => {
+    const locator = makeLocator();
+    const page = makePage({ getByRole: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
 
-    await press_key.execute(ctx, { key: 'Enter', selector: 'form input', delay_ms: 0 });
-    expect(page.press).toHaveBeenCalledWith('form input', 'Enter', expect.any(Object));
+    await press.execute(ctx, {
+      key: 'Enter',
+      locator: { role: 'textbox' },
+      delay: 0,
+    });
+    expect(locator.press).toHaveBeenCalledWith('Enter', expect.any(Object));
 
-    await press_key.execute(ctx, { key: 'Escape', delay_ms: 0 });
+    await press.execute(ctx, { key: 'Escape', delay: 0 });
     expect(page.keyboard.press).toHaveBeenCalledWith('Escape', expect.any(Object));
   });
 
-  it('select_option returns the selected values', async () => {
-    const { ctx, page } = makeCtx();
-    page.selectOption.mockResolvedValueOnce(['tr']);
+  it('hover, focus, blur, scrollIntoViewIfNeeded delegate to the locator', async () => {
+    const locator = makeLocator();
+    const page = makePage({ locator: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
 
-    const result = await select_option.execute(ctx, { selector: 'select#country', values: ['tr'], timeout_ms: 5_000 });
+    await hover.execute(ctx, { locator: { selector: '.h' }, force: false, timeout: 5_000 });
+    await focus.execute(ctx, { locator: { selector: '.h' }, timeout: 5_000 });
+    await blur.execute(ctx, { locator: { selector: '.h' }, timeout: 5_000 });
+    await scrollIntoViewIfNeeded.execute(ctx, {
+      locator: { selector: '.h' },
+      timeout: 5_000,
+    });
+
+    expect(locator.hover).toHaveBeenCalled();
+    expect(locator.focus).toHaveBeenCalled();
+    expect(locator.blur).toHaveBeenCalled();
+    expect(locator.scrollIntoViewIfNeeded).toHaveBeenCalled();
+  });
+
+  it('dragTo passes both source and target locators', async () => {
+    const source = makeLocator();
+    const target = makeLocator();
+    let call = 0;
+    const page = makePage({
+      locator: vi.fn(() => (call++ === 0 ? source : target)) as never,
+    });
+    const { ctx } = makeCtx({ page });
+
+    await dragTo.execute(ctx, {
+      locator: { selector: '.from' },
+      target: { selector: '.to' },
+      force: false,
+      timeout: 5_000,
+    });
+
+    expect(source.dragTo).toHaveBeenCalled();
+  });
+
+  it('selectOption returns the selected values', async () => {
+    const locator = makeLocator({ selectOption: vi.fn(async () => ['tr']) });
+    const page = makePage({ getByRole: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
+
+    const result = await selectOption.execute(ctx, {
+      locator: { role: 'combobox' },
+      values: ['tr'],
+      timeout: 5_000,
+    });
 
     expect(result.ok).toBe(true);
     expect((result.output as { selected: string[] }).selected).toEqual(['tr']);
   });
 
   it('check toggles based on state', async () => {
-    const { ctx, page } = makeCtx();
+    const locator = makeLocator();
+    const page = makePage({ locator: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
 
-    await check.execute(ctx, { selector: 'input.box', state: true, timeout_ms: 5_000 });
-    expect(page.check).toHaveBeenCalledWith('input.box', expect.any(Object));
+    await check.execute(ctx, { locator: { selector: 'input.box' }, state: true, timeout: 5_000 });
+    expect(locator.check).toHaveBeenCalled();
 
-    await check.execute(ctx, { selector: 'input.box', state: false, timeout_ms: 5_000 });
-    expect(page.uncheck).toHaveBeenCalledWith('input.box', expect.any(Object));
+    await check.execute(ctx, { locator: { selector: 'input.box' }, state: false, timeout: 5_000 });
+    expect(locator.uncheck).toHaveBeenCalled();
   });
 
-  it('upload_file decodes base64 into setInputFiles', async () => {
-    const { ctx, page } = makeCtx();
+  it('setInputFiles decodes base64 and forwards to the locator', async () => {
+    const locator = makeLocator();
+    const page = makePage({ getByTestId: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
     const payload = Buffer.from('hello').toString('base64');
 
-    const result = await upload_file.execute(ctx, {
-      selector: 'input[type=file]',
+    const result = await setInputFiles.execute(ctx, {
+      locator: { testid: 'upload' },
       source: 'base64',
       payload,
       filename: 'demo.txt',
-      mime_type: 'text/plain',
-      timeout_ms: 5_000,
+      mimeType: 'text/plain',
+      timeout: 5_000,
     });
 
-    expect(page.setInputFiles).toHaveBeenCalled();
-    const args = page.setInputFiles.mock.calls[0]!;
-    expect(args[0]).toBe('input[type=file]');
-    expect((args[1] as { name: string }).name).toBe('demo.txt');
+    expect(locator.setInputFiles).toHaveBeenCalled();
+    const [args] = locator.setInputFiles.mock.calls;
+    expect((args![0] as { name: string }).name).toBe('demo.txt');
     expect(result.ok).toBe(true);
     expect((result.output as { bytes: number }).bytes).toBe(5);
   });

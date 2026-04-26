@@ -1,65 +1,56 @@
 import { z } from 'zod';
 import type { StepExecutor } from './types.js';
 
-export const scroll_to: StepExecutor = {
-  name: 'scroll_to',
-  description: 'Scroll an element matched by selector into view.',
-  schema: z.object({
-    selector: z.string(),
-    behavior: z.enum(['auto', 'smooth']).default('auto'),
-    block: z.enum(['start', 'center', 'end', 'nearest']).default('center'),
-    timeout_ms: z.number().int().positive().default(10_000),
-  }).strict(),
-  async execute(ctx, config) {
-    const c = config as { selector: string; behavior: 'auto' | 'smooth'; block: 'start' | 'center' | 'end' | 'nearest'; timeout_ms: number };
-    const handle = await ctx.page.waitForSelector(c.selector, { timeout: c.timeout_ms });
-    if (handle === null) {
-      return { ok: false, error: `scroll_to: selector not found ${c.selector}` };
-    }
-    await handle.evaluate(
-      (el, opts) => (el as Element).scrollIntoView(opts),
-      { behavior: c.behavior, block: c.block },
-    );
-    return { ok: true, output: { selector: c.selector } };
-  },
-};
+const TimeoutMs = z.number().int().positive().max(120_000);
 
-export const scroll_by: StepExecutor = {
-  name: 'scroll_by',
+export const scrollBy: StepExecutor = {
+  name: 'scrollBy',
   description: 'Scroll the page by a pixel offset.',
-  schema: z.object({
-    x: z.number().default(0),
-    y: z.number().default(0),
-  }).strict(),
+  schema: z
+    .object({
+      x: z.number().default(0),
+      y: z.number().default(0),
+    })
+    .strict(),
   async execute(ctx, config) {
     const c = config as { x: number; y: number };
     await ctx.page.evaluate(({ x, y }) => window.scrollBy(x, y), { x: c.x, y: c.y });
+
     return { ok: true, output: { x: c.x, y: c.y } };
   },
 };
 
-export const scroll_until_plateau: StepExecutor = {
-  name: 'scroll_until_plateau',
-  description: 'Scroll repeatedly until the page height stops growing.',
-  schema: z.object({
-    selector: z.string().optional(),
-    max_iterations: z.number().int().positive().default(20),
-    settle_ms: z.number().int().nonnegative().default(750),
-    plateau_iterations: z.number().int().positive().default(2),
-    step_px: z.number().int().positive().default(1200),
-  }).strict(),
+export const scrollUntilPlateau: StepExecutor = {
+  name: 'scrollUntilPlateau',
+  description: 'Scroll repeatedly until the page or container height stops growing.',
+  schema: z
+    .object({
+      selector: z.string().optional(),
+      maxIterations: z.number().int().positive().default(20),
+      settleMs: z.number().int().nonnegative().default(750),
+      plateauIterations: z.number().int().positive().default(2),
+      stepPx: z.number().int().positive().default(1200),
+    })
+    .strict(),
   async execute(ctx, config) {
-    const c = config as { selector?: string; max_iterations: number; settle_ms: number; plateau_iterations: number; step_px: number };
+    const c = config as {
+      selector?: string;
+      maxIterations: number;
+      settleMs: number;
+      plateauIterations: number;
+      stepPx: number;
+    };
 
     let lastHeight = -1;
     let plateauHits = 0;
     let iterations = 0;
 
-    for (; iterations < c.max_iterations; iterations++) {
+    for (; iterations < c.maxIterations; iterations++) {
       const height = await ctx.page.evaluate(
         ({ selector, stepPx }) => {
-          const target = selector ? (document.querySelector(selector) as HTMLElement | null) : null;
-          const container: HTMLElement | (Window & typeof globalThis) = target ?? window;
+          const target = selector
+            ? (document.querySelector(selector) as HTMLElement | null)
+            : null;
 
           if (target) {
             target.scrollBy({ top: stepPx });
@@ -69,15 +60,18 @@ export const scroll_until_plateau: StepExecutor = {
           window.scrollBy({ top: stepPx });
           return document.documentElement.scrollHeight;
         },
-        { selector: c.selector, stepPx: c.step_px },
+        { selector: c.selector, stepPx: c.stepPx },
       );
 
-      await new Promise((resolve) => setTimeout(resolve, c.settle_ms));
+      await new Promise((resolve) => setTimeout(resolve, c.settleMs));
 
       if (height === lastHeight) {
         plateauHits += 1;
-        if (plateauHits >= c.plateau_iterations) {
-          return { ok: true, output: { iterations: iterations + 1, final_height: height, plateau: true } };
+        if (plateauHits >= c.plateauIterations) {
+          return {
+            ok: true,
+            output: { iterations: iterations + 1, finalHeight: height, plateau: true },
+          };
         }
       } else {
         plateauHits = 0;
@@ -85,30 +79,39 @@ export const scroll_until_plateau: StepExecutor = {
       }
     }
 
-    return { ok: true, output: { iterations, final_height: lastHeight, plateau: false } };
+    return { ok: true, output: { iterations, finalHeight: lastHeight, plateau: false } };
   },
 };
 
-export const scroll_modal: StepExecutor = {
-  name: 'scroll_modal',
+export const scrollModal: StepExecutor = {
+  name: 'scrollModal',
   description: 'Scroll inside a modal until its inner content stops growing.',
-  schema: z.object({
-    modal_selector: z.string(),
-    scroll_selector: z.string().optional(),
-    max_iterations: z.number().int().positive().default(15),
-    settle_ms: z.number().int().nonnegative().default(500),
-    step_px: z.number().int().positive().default(800),
-    timeout_ms: z.number().int().positive().default(10_000),
-  }).strict(),
+  schema: z
+    .object({
+      modalSelector: z.string().min(1),
+      scrollSelector: z.string().optional(),
+      maxIterations: z.number().int().positive().default(15),
+      settleMs: z.number().int().nonnegative().default(500),
+      stepPx: z.number().int().positive().default(800),
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
   async execute(ctx, config) {
-    const c = config as { modal_selector: string; scroll_selector?: string; max_iterations: number; settle_ms: number; step_px: number; timeout_ms: number };
+    const c = config as {
+      modalSelector: string;
+      scrollSelector?: string;
+      maxIterations: number;
+      settleMs: number;
+      stepPx: number;
+      timeout: number;
+    };
 
-    await ctx.page.waitForSelector(c.modal_selector, { timeout: c.timeout_ms });
+    await ctx.page.waitForSelector(c.modalSelector, { timeout: c.timeout });
 
-    const target = c.scroll_selector ?? c.modal_selector;
+    const target = c.scrollSelector ?? c.modalSelector;
     let lastHeight = -1;
 
-    for (let i = 0; i < c.max_iterations; i++) {
+    for (let i = 0; i < c.maxIterations; i++) {
       const height = await ctx.page.evaluate(
         ({ selector, stepPx }) => {
           const el = document.querySelector(selector) as HTMLElement | null;
@@ -116,57 +119,24 @@ export const scroll_modal: StepExecutor = {
           el.scrollBy({ top: stepPx });
           return el.scrollHeight;
         },
-        { selector: target, stepPx: c.step_px },
+        { selector: target, stepPx: c.stepPx },
       );
 
-      await new Promise((resolve) => setTimeout(resolve, c.settle_ms));
+      await new Promise((resolve) => setTimeout(resolve, c.settleMs));
 
       if (height === -1) {
-        return { ok: false, error: `scroll_modal: selector lost ${target}` };
+        return { ok: false, error: `scrollModal: selector lost ${target}` };
       }
 
       if (height === lastHeight) {
-        return { ok: true, output: { iterations: i + 1, final_height: height, plateau: true } };
+        return { ok: true, output: { iterations: i + 1, finalHeight: height, plateau: true } };
       }
       lastHeight = height;
     }
 
-    return { ok: true, output: { iterations: c.max_iterations, final_height: lastHeight, plateau: false } };
-  },
-};
-
-export const set_viewport: StepExecutor = {
-  name: 'set_viewport',
-  description: 'Resize the page viewport.',
-  schema: z.object({
-    width: z.number().int().positive(),
-    height: z.number().int().positive(),
-  }).strict(),
-  async execute(ctx, config) {
-    const c = config as { width: number; height: number };
-    await ctx.page.setViewportSize({ width: c.width, height: c.height });
-    return { ok: true, output: { width: c.width, height: c.height } };
-  },
-};
-
-export const set_user_agent: StepExecutor = {
-  name: 'set_user_agent',
-  description: 'Persist a user-agent override for the next session boot.',
-  schema: z.object({
-    user_agent: z.string(),
-  }).strict(),
-  async execute(ctx, config) {
-    const c = config as { user_agent: string };
-    // Patchright cannot mutate the UA of a live context. Persist the
-    // override so a future session refresh applies it; warn the caller.
-    ctx.log('set_user_agent: stored, applies on next session boot', { user_agent: c.user_agent });
     return {
       ok: true,
-      output: {
-        user_agent: c.user_agent,
-        applied_immediately: false,
-        note: 'Stored for next session boot; live UA mutation is not supported.',
-      },
+      output: { iterations: c.maxIterations, finalHeight: lastHeight, plateau: false },
     };
   },
 };

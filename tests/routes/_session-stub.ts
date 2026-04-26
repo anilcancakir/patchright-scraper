@@ -19,39 +19,81 @@ export function __resetStub(): void {
   stub = {};
 }
 
+function buildLocator(): unknown {
+  return {
+    click: async () => undefined,
+    fill: async () => undefined,
+    type: async () => undefined,
+    press: async () => undefined,
+    hover: async () => undefined,
+    focus: async () => undefined,
+    blur: async () => undefined,
+    dblclick: async () => undefined,
+    dragTo: async () => undefined,
+    scrollIntoViewIfNeeded: async () => undefined,
+    selectOption: async () => [],
+    check: async () => undefined,
+    uncheck: async () => undefined,
+    setInputFiles: async () => undefined,
+    innerText: async () => '',
+    inputValue: async () => '',
+    getAttribute: async () => null,
+    isVisible: async () => true,
+    isEnabled: async () => true,
+    isDisabled: async () => false,
+    isChecked: async () => false,
+    count: async () => 1,
+    evaluate: async () => undefined,
+    screenshot: async () => Buffer.from(''),
+    waitFor: async () => undefined,
+  };
+}
+
 function buildPage(): never {
+  const locator = buildLocator();
+  const lookup = (): unknown => locator;
+
   return {
     url: () => stub.url ?? 'https://example.org/',
     goto: stub.gotoSpy ?? (async () => ({ status: () => 200 })),
     reload: async () => ({ status: () => 200 }),
     goBack: async () => null,
-    waitForSelector: async () => ({
-      evaluate: async () => undefined,
-      innerText: async () => '',
-      getAttribute: async () => null,
-      screenshot: async () => Buffer.from(''),
-    }),
+    goForward: async () => null,
+    waitForSelector: async () => locator,
     waitForLoadState: async () => undefined,
-    click: async () => undefined,
-    type: async () => undefined,
-    fill: async () => undefined,
-    press: async () => undefined,
+    waitForURL: async () => undefined,
+    waitForFunction: async () => null,
     keyboard: { press: async () => undefined },
-    selectOption: async () => [],
-    check: async () => undefined,
-    uncheck: async () => undefined,
-    setInputFiles: async () => undefined,
     screenshot: async () => Buffer.from(''),
     content: async () => '',
+    title: async () => 'stub',
     evaluate: async () => undefined,
     setViewportSize: async () => undefined,
+    locator: lookup,
+    getByRole: lookup,
+    getByText: lookup,
+    getByLabel: lookup,
+    getByPlaceholder: lookup,
+    getByTestId: lookup,
+    getByAltText: lookup,
+    getByTitle: lookup,
+  } as never;
+}
+
+function buildContext(): never {
+  return {
+    setExtraHTTPHeaders: async () => undefined,
+    setOffline: async () => undefined,
+    setGeolocation: async () => undefined,
+    grantPermissions: async () => undefined,
+    route: async () => undefined,
   } as never;
 }
 
 function buildSession(): ManagedSession {
   return {
     id: stub.id ?? 'stub',
-    context: {} as never,
+    context: buildContext(),
     page: buildPage(),
     profilePath: '/tmp/stub',
     createdAt: Date.now(),

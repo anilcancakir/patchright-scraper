@@ -1,86 +1,261 @@
-import { z } from 'zod';
-import { mkdtempSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { z } from 'zod';
+import { LocatorSpec, resolveLocator } from './locator.js';
 import type { StepExecutor } from './types.js';
+
+const TimeoutMs = z.number().int().positive().max(120_000);
 
 export const click: StepExecutor = {
   name: 'click',
-  description: 'Click an element matched by selector.',
-  schema: z.object({
-    selector: z.string(),
-    timeout_ms: z.number().int().positive().default(10_000),
-    force: z.boolean().default(false),
-    button: z.enum(['left', 'right', 'middle']).default('left'),
-    click_count: z.number().int().positive().default(1),
-  }).strict(),
+  description: 'Click an element matched by a locator.',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      button: z.enum(['left', 'right', 'middle']).default('left'),
+      clickCount: z.number().int().positive().default(1),
+      delay: z.number().int().nonnegative().default(0),
+      force: z.boolean().default(false),
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
   async execute(ctx, config) {
-    const c = config as { selector: string; timeout_ms: number; force: boolean; button: 'left' | 'right' | 'middle'; click_count: number };
-    await ctx.page.click(c.selector, {
-      timeout: c.timeout_ms,
-      force: c.force,
+    const c = config as {
+      locator: LocatorSpec;
+      button: 'left' | 'right' | 'middle';
+      clickCount: number;
+      delay: number;
+      force: boolean;
+      timeout: number;
+    };
+    await resolveLocator(ctx.page, c.locator).click({
       button: c.button,
-      clickCount: c.click_count,
+      clickCount: c.clickCount,
+      delay: c.delay,
+      force: c.force,
+      timeout: c.timeout,
     });
-    return { ok: true, output: { selector: c.selector } };
+
+    return { ok: true, output: { clicked: true } };
   },
 };
 
-export const type_text: StepExecutor = {
-  name: 'type_text',
-  description: 'Type text into an input matched by selector.',
-  schema: z.object({
-    selector: z.string(),
-    text: z.string(),
-    delay_ms: z.number().int().nonnegative().default(0),
-    clear: z.boolean().default(false),
-    timeout_ms: z.number().int().positive().default(10_000),
-  }).strict(),
+export const dblclick: StepExecutor = {
+  name: 'dblclick',
+  description: 'Double-click an element matched by a locator.',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      button: z.enum(['left', 'right', 'middle']).default('left'),
+      delay: z.number().int().nonnegative().default(0),
+      force: z.boolean().default(false),
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
   async execute(ctx, config) {
-    const c = config as { selector: string; text: string; delay_ms: number; clear: boolean; timeout_ms: number };
+    const c = config as {
+      locator: LocatorSpec;
+      button: 'left' | 'right' | 'middle';
+      delay: number;
+      force: boolean;
+      timeout: number;
+    };
+    await resolveLocator(ctx.page, c.locator).dblclick({
+      button: c.button,
+      delay: c.delay,
+      force: c.force,
+      timeout: c.timeout,
+    });
+
+    return { ok: true, output: { clicked: true } };
+  },
+};
+
+export const fill: StepExecutor = {
+  name: 'fill',
+  description: 'Fill an input/textarea instantly (no per-character delay).',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      value: z.string(),
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
+  async execute(ctx, config) {
+    const c = config as { locator: LocatorSpec; value: string; timeout: number };
+    await resolveLocator(ctx.page, c.locator).fill(c.value, { timeout: c.timeout });
+
+    return { ok: true, output: { length: c.value.length } };
+  },
+};
+
+export const type: StepExecutor = {
+  name: 'type',
+  description: 'Type text character-by-character with optional per-key delay.',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      text: z.string(),
+      delay: z.number().int().nonnegative().default(0),
+      clear: z.boolean().default(false),
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
+  async execute(ctx, config) {
+    const c = config as {
+      locator: LocatorSpec;
+      text: string;
+      delay: number;
+      clear: boolean;
+      timeout: number;
+    };
+    const target = resolveLocator(ctx.page, c.locator);
 
     if (c.clear) {
-      await ctx.page.fill(c.selector, '', { timeout: c.timeout_ms });
+      await target.fill('', { timeout: c.timeout });
     }
+    await target.type(c.text, { delay: c.delay, timeout: c.timeout });
 
-    // Use type() rather than fill() so per-character delay can mimic
-    // human pacing when the target element refuses programmatic fill.
-    await ctx.page.type(c.selector, c.text, { delay: c.delay_ms, timeout: c.timeout_ms });
     return { ok: true, output: { length: c.text.length } };
   },
 };
 
-export const press_key: StepExecutor = {
-  name: 'press_key',
-  description: 'Send a single keyboard key (e.g. Enter, Tab) to the page.',
-  schema: z.object({
-    key: z.string(),
-    selector: z.string().optional(),
-    delay_ms: z.number().int().nonnegative().default(0),
-  }).strict(),
+export const press: StepExecutor = {
+  name: 'press',
+  description: 'Press a single keyboard key, optionally focused on an element first.',
+  schema: z
+    .object({
+      key: z.string().min(1),
+      locator: LocatorSpec.optional(),
+      delay: z.number().int().nonnegative().default(0),
+    })
+    .strict(),
   async execute(ctx, config) {
-    const c = config as { key: string; selector?: string; delay_ms: number };
+    const c = config as { key: string; locator?: LocatorSpec; delay: number };
 
-    if (c.selector !== undefined) {
-      await ctx.page.press(c.selector, c.key, { delay: c.delay_ms });
+    if (c.locator !== undefined) {
+      await resolveLocator(ctx.page, c.locator).press(c.key, { delay: c.delay });
     } else {
-      await ctx.page.keyboard.press(c.key, { delay: c.delay_ms });
+      await ctx.page.keyboard.press(c.key, { delay: c.delay });
     }
+
     return { ok: true, output: { key: c.key } };
   },
 };
 
-export const select_option: StepExecutor = {
-  name: 'select_option',
-  description: 'Select one or more options on a select element.',
-  schema: z.object({
-    selector: z.string(),
-    values: z.array(z.string()).min(1),
-    timeout_ms: z.number().int().positive().default(10_000),
-  }).strict(),
+export const hover: StepExecutor = {
+  name: 'hover',
+  description: 'Hover the cursor over an element matched by a locator.',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      force: z.boolean().default(false),
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
   async execute(ctx, config) {
-    const c = config as { selector: string; values: string[]; timeout_ms: number };
-    const selected = await ctx.page.selectOption(c.selector, c.values, { timeout: c.timeout_ms });
+    const c = config as { locator: LocatorSpec; force: boolean; timeout: number };
+    await resolveLocator(ctx.page, c.locator).hover({ force: c.force, timeout: c.timeout });
+
+    return { ok: true, output: { hovered: true } };
+  },
+};
+
+export const focus: StepExecutor = {
+  name: 'focus',
+  description: 'Focus an element matched by a locator.',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
+  async execute(ctx, config) {
+    const c = config as { locator: LocatorSpec; timeout: number };
+    await resolveLocator(ctx.page, c.locator).focus({ timeout: c.timeout });
+
+    return { ok: true, output: { focused: true } };
+  },
+};
+
+export const blur: StepExecutor = {
+  name: 'blur',
+  description: 'Blur an element matched by a locator.',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
+  async execute(ctx, config) {
+    const c = config as { locator: LocatorSpec; timeout: number };
+    await resolveLocator(ctx.page, c.locator).blur({ timeout: c.timeout });
+
+    return { ok: true, output: { blurred: true } };
+  },
+};
+
+export const dragTo: StepExecutor = {
+  name: 'dragTo',
+  description: 'Drag the source element to the target element.',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      target: LocatorSpec,
+      force: z.boolean().default(false),
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
+  async execute(ctx, config) {
+    const c = config as {
+      locator: LocatorSpec;
+      target: LocatorSpec;
+      force: boolean;
+      timeout: number;
+    };
+    await resolveLocator(ctx.page, c.locator).dragTo(resolveLocator(ctx.page, c.target), {
+      force: c.force,
+      timeout: c.timeout,
+    });
+
+    return { ok: true, output: { dragged: true } };
+  },
+};
+
+export const scrollIntoViewIfNeeded: StepExecutor = {
+  name: 'scrollIntoViewIfNeeded',
+  description: 'Scroll the element into view if it is not already.',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
+  async execute(ctx, config) {
+    const c = config as { locator: LocatorSpec; timeout: number };
+    await resolveLocator(ctx.page, c.locator).scrollIntoViewIfNeeded({ timeout: c.timeout });
+
+    return { ok: true, output: { scrolled: true } };
+  },
+};
+
+export const selectOption: StepExecutor = {
+  name: 'selectOption',
+  description: 'Select one or more options on a <select> element.',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      values: z.array(z.string()).min(1),
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
+  async execute(ctx, config) {
+    const c = config as { locator: LocatorSpec; values: string[]; timeout: number };
+    const selected = await resolveLocator(ctx.page, c.locator).selectOption(c.values, {
+      timeout: c.timeout,
+    });
+
     return { ok: true, output: { selected } };
   },
 };
@@ -88,58 +263,69 @@ export const select_option: StepExecutor = {
 export const check: StepExecutor = {
   name: 'check',
   description: 'Toggle a checkbox or radio input to the desired state.',
-  schema: z.object({
-    selector: z.string(),
-    state: z.boolean().default(true),
-    timeout_ms: z.number().int().positive().default(10_000),
-  }).strict(),
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      state: z.boolean().default(true),
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
   async execute(ctx, config) {
-    const c = config as { selector: string; state: boolean; timeout_ms: number };
+    const c = config as { locator: LocatorSpec; state: boolean; timeout: number };
+    const target = resolveLocator(ctx.page, c.locator);
 
     if (c.state) {
-      await ctx.page.check(c.selector, { timeout: c.timeout_ms });
+      await target.check({ timeout: c.timeout });
     } else {
-      await ctx.page.uncheck(c.selector, { timeout: c.timeout_ms });
+      await target.uncheck({ timeout: c.timeout });
     }
+
     return { ok: true, output: { state: c.state } };
   },
 };
 
-export const upload_file: StepExecutor = {
-  name: 'upload_file',
-  description: 'Upload a base64-encoded file or remote URL to a file input.',
-  schema: z.object({
-    selector: z.string(),
-    source: z.enum(['base64', 'url']),
-    payload: z.string(),
-    filename: z.string(),
-    mime_type: z.string().default('application/octet-stream'),
-    timeout_ms: z.number().int().positive().default(30_000),
-  }).strict(),
+export const setInputFiles: StepExecutor = {
+  name: 'setInputFiles',
+  description: 'Attach a base64-encoded file or remote URL to an <input type=file>.',
+  schema: z
+    .object({
+      locator: LocatorSpec,
+      source: z.enum(['base64', 'url']),
+      payload: z.string(),
+      filename: z.string(),
+      mimeType: z.string().default('application/octet-stream'),
+      timeout: TimeoutMs.default(30_000),
+    })
+    .strict(),
   async execute(ctx, config) {
-    const c = config as { selector: string; source: 'base64' | 'url'; payload: string; filename: string; mime_type: string; timeout_ms: number };
+    const c = config as {
+      locator: LocatorSpec;
+      source: 'base64' | 'url';
+      payload: string;
+      filename: string;
+      mimeType: string;
+      timeout: number;
+    };
 
     let buffer: Buffer;
     if (c.source === 'base64') {
       buffer = Buffer.from(c.payload, 'base64');
     } else {
-      const response = await fetch(c.payload, { signal: AbortSignal.timeout(c.timeout_ms) });
+      const response = await fetch(c.payload, { signal: AbortSignal.timeout(c.timeout) });
       if (!response.ok) {
-        return { ok: false, error: `upload_file: fetch failed ${response.status}` };
+        return { ok: false, error: `setInputFiles: fetch failed ${response.status}` };
       }
       buffer = Buffer.from(await response.arrayBuffer());
     }
 
-    // Stream to a tmp file so memory does not balloon for large uploads;
-    // unlink afterwards regardless of outcome.
     const dir = mkdtempSync(join(tmpdir(), 'patchright-upload-'));
     const tmpFile = join(dir, c.filename);
     writeFileSync(tmpFile, buffer);
 
     try {
-      await ctx.page.setInputFiles(c.selector, {
+      await resolveLocator(ctx.page, c.locator).setInputFiles({
         name: c.filename,
-        mimeType: c.mime_type,
+        mimeType: c.mimeType,
         buffer,
       });
     } finally {
