@@ -33,8 +33,14 @@ start_vnc() {
     if [[ "${ENABLE_VNC:-0}" != "1" ]]; then
         return
     fi
-    log "starting x11vnc on :0 -> 5900"
-    local x11vnc_args=(-display :99 -forever -shared -rfbport 5900 -bg -o /tmp/x11vnc.log)
+    log "starting x11vnc on :99 -> 5900"
+    # `-threads` is required: without it x11vnc's accept loop runs in the
+    # same thread as the framebuffer reader, which deadlocks under busy
+    # Xvfb scenes; the TCP socket accepts but the RFB greeting is never
+    # written back, so noVNC sits forever on "Connecting...".
+    # IPv6 disabled (`-rfbportv6 -1`) to silence the "address already in
+    # use" noise that x11vnc prints when the IPv4 listener wins the race.
+    local x11vnc_args=(-display :99 -forever -shared -threads -rfbport 5900 -rfbportv6 -1 -bg -o /tmp/x11vnc.log)
     if [[ -n "${VNC_PASSWORD:-}" ]]; then
         local pwfile=/tmp/.vnc-pw
         x11vnc -storepasswd "${VNC_PASSWORD}" "${pwfile}" >/dev/null 2>&1

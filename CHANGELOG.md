@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.2.2 (2026-04-27)
+
+Live noVNC viewer fix. The previous x11vnc invocation deadlocked under
+busy Xvfb scenes: the TCP socket accepted the websockify connection but
+the RFB greeting was never written back, leaving every noVNC client
+hanging on "Connecting...". Reproduced reliably with the upstream
+kodizm-scrapper-api `live-vnc-viewer` plan once the iframe + URL layers
+were ruled out.
+
+- `entrypoint.sh` now invokes x11vnc with `-threads` so the accept loop
+  runs in its own pthread and is no longer blocked by the framebuffer
+  reader.
+- `-rfbportv6 -1` silences the "address already in use" warning when the
+  IPv4 listener wins the race against the IPv6 bind.
+- Log line now reflects the real display (`:99 -> 5900`).
+
 ## v0.2.1 (2026-04-27)
 
 Step API hardening + discovery. Closes the audit-followups Phase 2
