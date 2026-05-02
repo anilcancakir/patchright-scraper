@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { registerRoutes } from './routes.js';
-import { startIdleReaper } from './session.js';
+import { hydrateBearerRegistry, startIdleReaper } from './session.js';
 
 /**
  * Boot the Patchright Fastify HTTP service.
@@ -15,6 +15,7 @@ async function main(): Promise<void> {
     },
   });
 
+  hydrateBearerRegistry();
   registerRoutes(app);
 
   const reaper = startIdleReaper();

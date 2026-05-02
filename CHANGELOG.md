@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+## v0.4.0 (2026-05-02)
+
+Pool mode foundations. Same image, same `POST /v1/sessions` contract,
+new wiring so the upstream Kodizm `PatchrightPoolProvisioner` can run
+N sessions inside one container with per-session capture routing.
+
+Added:
+
+- `SessionCreate.bearer` (optional). Sessions land in
+  `/data/session-bearers.json` (atomic-rename writes) so the mitm
+  sidecar can route per-flow captures with the right ingest token.
+- Chrome auto-stamps `X-Kodizm-Session: <id>` on every outbound
+  request via `setExtraHTTPHeaders`. The mitm addon reads the
+  header, looks the bearer up in the registry, and embeds it as
+  `_meta.bearer` on the queued capture file.
+- `mitm/pusher.py` honours `_meta.bearer` per-flow (pool mode) and
+  falls back to `MITM_PUSH_TOKEN` (legacy single-session) when the
+  envelope is absent. `_meta` strips before the upstream POST.
+- New endpoints:
+    - `POST   /v1/sessions/:id/vnc` touches the VNC stream so the
+      shared display stays alive (returns the websockify URL +
+      expires_at).
+    - `DELETE /v1/sessions/:id/vnc` clears the VNC flag.
+    - `GET    /v1/sessions/:id/vnc` reports current state.
+- Three-tier idle settings (`CHROME_IDLE_MS`, `VNC_IDLE_MS`).
+  Chrome idle defaults to 1h; VNC idle defaults to 15 min. The
+  reaper closes context past CHROME_IDLE and clears stale VNC
+  flags past VNC_IDLE.
+- `hydrateBearerRegistry()` runs on boot so a fresh container
+  starts with an empty registry on disk.
+
+Pending in v0.4.1 (per-session VNC display isolation):
+- Each session gets its own Xvfb display + websockify port.
+  v0.4.0 still ships a shared display; the lifecycle endpoints are
+  in place so the upstream PHP wiring can reach for them today.
+
+
+
 ## v0.2.2 (2026-04-27)
 
 Live noVNC viewer fix. The previous x11vnc invocation deadlocked under

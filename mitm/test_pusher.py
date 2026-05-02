@@ -114,3 +114,45 @@ def test_unreadable_file_dead_letters(tmp_path, monkeypatch):
     assert counters == {"ok": 0, "retry": 0, "dead": 1}
     assert not bad.exists()
     assert (dead / "broken.json").exists()
+
+
+def test_per_flow_bearer_overrides_env_token(tmp_path, monkeypatch):
+    queue = tmp_path / "queue"
+    dead = tmp_path / "dead"
+    pusher = _import_pusher(monkeypatch, queue, dead)
+    queue.mkdir(parents=True, exist_ok=True)
+
+    capture = queue / "pool.json"
+    capture.write_text(
+        json.dumps(
+            {
+                "session_id": "pool-session-id",
+                "request": {"url": "https://example.org/"},
+                "_meta": {"bearer": "kdz-mitm-pool-bearer"},
+            },
+        ),
+    )
+
+    session = _ok_session(200)
+    pusher._drain_queue(session=session)
+
+    args, kwargs = session.post.call_args
+    headers = kwargs["headers"]
+    sent_payload = kwargs["json"]
+
+    assert headers["Authorization"] == "Bearer kdz-mitm-pool-bearer"
+    assert "_meta" not in sent_payload
+
+
+def test_env_bearer_used_when_no_meta(tmp_path, monkeypatch):
+    queue = tmp_path / "queue"
+    dead = tmp_path / "dead"
+    pusher = _import_pusher(monkeypatch, queue, dead)
+    capture = _write_capture(queue, name="legacy.json")
+    assert capture.exists()
+
+    session = _ok_session(200)
+    pusher._drain_queue(session=session)
+
+    args, kwargs = session.post.call_args
+    assert kwargs["headers"]["Authorization"] == "Bearer secret"

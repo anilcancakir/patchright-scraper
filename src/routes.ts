@@ -2,11 +2,13 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { oneShotScrape, runScrape } from './browser.js';
 import {
+  clearVnc,
   createSession,
   destroySession,
   getSession,
   listSessions,
   refreshState,
+  touchVnc,
 } from './session.js';
 import type { ManagedSession } from './session.js';
 import { stepRegistry } from './steps/index.js';
@@ -49,6 +51,9 @@ function buildStepContext(session: ManagedSession, log: (msg: string, meta?: Rec
  *  POST   /v1/sessions/:id/step             execute a registered step
  *  POST   /v1/sessions/:id/screenshot       capture a screenshot
  *  GET    /v1/sessions/:id/state            current session state
+ *  POST   /v1/sessions/:id/vnc               touch the VNC stream (keeps shared display alive)
+ *  DELETE /v1/sessions/:id/vnc               clear the VNC stream flag
+ *  GET    /v1/sessions/:id/vnc               read current VNC stream state
  *  GET    /v1/steps                         list registered step descriptors (name, description, JSON schema)
  */
 export function registerRoutes(app: FastifyInstance): void {
@@ -169,6 +174,64 @@ export function registerRoutes(app: FastifyInstance): void {
     }
 
     return runStep(app, session, 'screenshot', request.body ?? {}, reply);
+  });
+
+  app.post('/v1/sessions/:id/vnc', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const session = getSession(id);
+    if (session === undefined) {
+      reply.code(404);
+      return { status: 'error', message: 'session not found' };
+    }
+
+    touchVnc(session);
+
+    const port = Number(process.env.VNC_WS_PORT ?? 6080);
+    const host = process.env.VNC_HOST ?? '127.0.0.1';
+    const ttlSeconds = Number(process.env.VNC_IDLE_MS ?? 15 * 60 * 1000) / 1000;
+
+    return {
+      status: 'ok',
+      vnc: {
+        url: `ws://${host}:${port}`,
+        expires_at: Math.floor(Date.now() / 1000 + ttlSeconds),
+        display: ':99',
+      },
+    };
+  });
+
+  app.delete('/v1/sessions/:id/vnc', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const session = getSession(id);
+    if (session === undefined) {
+      reply.code(404);
+      return { status: 'error', message: 'session not found' };
+    }
+
+    clearVnc(session);
+
+    return { status: 'ok' };
+  });
+
+  app.get('/v1/sessions/:id/vnc', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const session = getSession(id);
+    if (session === undefined) {
+      reply.code(404);
+      return { status: 'error', message: 'session not found' };
+    }
+
+    const ttlMs = Number(process.env.VNC_IDLE_MS ?? 15 * 60 * 1000);
+    const requestedAt = session.vncRequestedAt ?? 0;
+    const active = requestedAt > Date.now() - ttlMs;
+
+    return {
+      status: 'ok',
+      vnc: {
+        active,
+        last_requested_at: requestedAt === 0 ? null : Math.floor(requestedAt / 1000),
+      },
+    };
   });
 
   app.post('/v1/sessions/:id/step', async (request, reply) => {

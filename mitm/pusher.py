@@ -35,11 +35,40 @@ logging.basicConfig(level=logging.INFO, format="[pusher] %(message)s")
 log = logging.getLogger("mitm.pusher")
 
 
-def _headers() -> dict[str, str]:
+def _headers(per_flow_bearer: Optional[str] = None) -> dict[str, str]:
+    """Compose the outgoing capture-push headers.
+
+    Per-flow bearer (pool mode v0.4.0) wins over the global env token
+    because each in-container session may push to a distinct ingest
+    endpoint with its own auth. Falls back to MITM_PUSH_TOKEN for the
+    legacy single-session image and any flow whose session id missed
+    the bearer registry.
+    """
     headers = {"Content-Type": "application/json"}
-    if PUSH_TOKEN:
-        headers["Authorization"] = f"Bearer {PUSH_TOKEN}"
+
+    bearer = per_flow_bearer or PUSH_TOKEN
+    if bearer:
+        headers["Authorization"] = f"Bearer {bearer}"
+
     return headers
+
+
+def _extract_meta(payload: dict) -> tuple[dict, Optional[str]]:
+    """Strip the addon-side `_meta` envelope and return (payload, bearer).
+
+    The addon only sets `_meta.bearer` for pool-mode flows; legacy
+    single-session captures never carry `_meta`, so the bearer falls
+    through to None and the env-level PUSH_TOKEN takes over.
+    """
+    meta = payload.pop("_meta", None) if isinstance(payload, dict) else None
+    bearer: Optional[str] = None
+
+    if isinstance(meta, dict):
+        candidate = meta.get("bearer")
+        if isinstance(candidate, str) and candidate != "":
+            bearer = candidate
+
+    return payload, bearer
 
 
 def _push_one(path: Path, session: Optional[requests.Session] = None) -> str:
@@ -57,9 +86,16 @@ def _push_one(path: Path, session: Optional[requests.Session] = None) -> str:
         shutil.move(str(path), str(DEAD_LETTER_DIR / path.name))
         return "dead"
 
+    payload, per_flow_bearer = _extract_meta(payload)
+
     http = session or requests
     try:
-        response = http.post(PUSH_URL, json=payload, headers=_headers(), timeout=HTTP_TIMEOUT)
+        response = http.post(
+            PUSH_URL,
+            json=payload,
+            headers=_headers(per_flow_bearer),
+            timeout=HTTP_TIMEOUT,
+        )
     except requests.RequestException as exc:
         log.warning("network error pushing %s: %s", path.name, exc)
         return "retry"
