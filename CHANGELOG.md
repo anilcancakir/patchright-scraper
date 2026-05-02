@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+## v0.4.6 (2026-05-02)
+
+Capture-optional architecture. The pool's mitm sidecar still ships
+on every container, but it only intercepts traffic for sessions the
+operator opted in to via `ScraperRunService::dispatch(captureTraffic:
+true)`. Capture-off dispatches skip the mitm proxy + cert-trust +
+per-flow JSON write entirely, saving roughly 1-2s per scrape.
+
+Two image-side changes back the new wire contract:
+
+- **Patchright `context.route()` injects `X-Kodizm-Session`.** Chrome's
+  HTTP/2 stack does not surface `extraHTTPHeaders` reliably to mitm's
+  `flow.request.headers.items()` (the header gets folded into the
+  SETTINGS frame and never appears on the per-request map). The
+  Patchright route interceptor sits above the network stack: every
+  Request fires through the hook, we mutate headers, and the
+  augmented set lands on every wire frame regardless of HTTP version.
+  mitm sees the header, the addon resolves `session_id` off it, and
+  pool-mode capture attribution finally works end-to-end.
+- **Single pool ingest bearer + payload-only session resolution.**
+  The per-session bearer registry the addon used to consult on every
+  flow is gone. The container launches with one `MITM_PUSH_TOKEN`
+  (the `kdz-pool-{32hex}` bearer the Laravel `PatchrightPoolProvisioner`
+  stamps on the launchSpec env + `Container.labels['kdz.pool_bearer_hash']`).
+  The addon writes `payload.session_id` from the route-interceptor
+  header and ships every capture with that one env-level bearer; the
+  upstream `ValidateMitmBearer` middleware hashes the bearer, looks
+  up the matching pool Container, then resolves the Session from
+  `payload.session_id` (defense in depth: the resolved Session's
+  `engine_payload.pool_container_id` MUST match the bearer's
+  Container so a leaked bearer cannot pollute another pool's
+  captures).
+
+Wire shape stays back-compat: `SessionCreateSchema.bearer` is still
+optional in the Fastify request body so older callers keep working;
+the field no longer drives anything image-side. Legacy `_meta`
+envelopes from in-flight v0.4.5 queue files keep getting stripped by
+the pusher.
+
 ## v0.4.5 (2026-05-02)
 
 Two unrelated fixes that landed in the same release because they

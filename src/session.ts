@@ -235,6 +235,25 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
     }),
   );
 
+  // Belt-and-braces session-id stamping. extraHTTPHeaders does not
+  // surface reliably on chrome HTTP/2 requests (the header gets
+  // packed into the SETTINGS frame and never appears on mitm's
+  // flow.request.headers.items()). The playwright route interceptor
+  // sits above the network stack: every Request fires through this
+  // hook, we mutate headers, and the augmented set lands on every
+  // wire frame regardless of HTTP version. mitm sees the header,
+  // the addon resolves session_id off it, and the capture pipeline
+  // attributes flows correctly even in pool mode where N sessions
+  // share one container.
+  await context.route('**/*', async (route) => {
+    const headers = {
+      ...route.request().headers(),
+      'x-kodizm-session': id,
+    };
+
+    await route.continue({ headers });
+  });
+
   const page = context.pages()[0] ?? (await context.newPage());
 
   const session: ManagedSession = {

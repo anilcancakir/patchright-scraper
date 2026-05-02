@@ -35,47 +35,40 @@ logging.basicConfig(level=logging.INFO, format="[pusher] %(message)s")
 log = logging.getLogger("mitm.pusher")
 
 
-def _headers(per_flow_bearer: Optional[str] = None) -> dict[str, str]:
+def _headers() -> dict[str, str]:
     """Compose the outgoing capture-push headers.
 
-    Per-flow bearer (pool mode v0.4.0) wins over the global env token
-    because each in-container session may push to a distinct ingest
-    endpoint with its own auth. Falls back to MITM_PUSH_TOKEN for the
-    legacy single-session image and any flow whose session id missed
-    the bearer registry.
+    Bearer comes from the env-level MITM_PUSH_TOKEN. Pool mode (v0.4.6+)
+    sets it from POOL_INGEST_BEARER at container launch; dedicated mode
+    keeps the per-Session bearer the launchSpec stamps. Either way the
+    pusher reads one env, no per-flow registry, no _meta envelope on the
+    queued capture file.
+
+    Accept header forces Laravel to surface validation + auth failures
+    as JSON instead of the default web-style 302 redirect to /. Without
+    it the upstream pusher dead-letters the file on an unrelated
+    redirect even when the bearer + payload are valid.
     """
-    # Accept header forces Laravel to surface validation + auth
-    # failures as JSON instead of the default web-style 302 redirect
-    # to /. Without it the upstream pusher dead-letters the file on
-    # an unrelated redirect even when the bearer + payload are valid.
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
 
-    bearer = per_flow_bearer or PUSH_TOKEN
-    if bearer:
-        headers["Authorization"] = f"Bearer {bearer}"
+    if PUSH_TOKEN:
+        headers["Authorization"] = f"Bearer {PUSH_TOKEN}"
 
     return headers
 
 
-def _extract_meta(payload: dict) -> tuple[dict, Optional[str]]:
-    """Strip the addon-side `_meta` envelope and return (payload, bearer).
+def _strip_meta(payload: dict) -> dict:
+    """Drop any `_meta` envelope a legacy v0.4.x addon may have written.
 
-    The addon only sets `_meta.bearer` for pool-mode flows; legacy
-    single-session captures never carry `_meta`, so the bearer falls
-    through to None and the env-level PUSH_TOKEN takes over.
+    v0.4.6 stops emitting `_meta`; the strip stays for back-compat with
+    in-flight queue files written by older addons.
     """
-    meta = payload.pop("_meta", None) if isinstance(payload, dict) else None
-    bearer: Optional[str] = None
-
-    if isinstance(meta, dict):
-        candidate = meta.get("bearer")
-        if isinstance(candidate, str) and candidate != "":
-            bearer = candidate
-
-    return payload, bearer
+    if isinstance(payload, dict):
+        payload.pop("_meta", None)
+    return payload
 
 
 def _push_one(path: Path, session: Optional[requests.Session] = None) -> str:
@@ -93,14 +86,14 @@ def _push_one(path: Path, session: Optional[requests.Session] = None) -> str:
         shutil.move(str(path), str(DEAD_LETTER_DIR / path.name))
         return "dead"
 
-    payload, per_flow_bearer = _extract_meta(payload)
+    payload = _strip_meta(payload)
 
     http = session or requests
     try:
         response = http.post(
             PUSH_URL,
             json=payload,
-            headers=_headers(per_flow_bearer),
+            headers=_headers(),
             timeout=HTTP_TIMEOUT,
         )
     except requests.RequestException as exc:
