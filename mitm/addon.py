@@ -130,7 +130,22 @@ def _response_payload(flow: http.HTTPFlow) -> dict:
 
 
 def response(flow: http.HTTPFlow) -> None:
-    """mitmproxy hook fired once a response has been received."""
+    """mitmproxy hook fired once a response has been received.
+
+    Skip flows that have no `X-Kodizm-Session` header. Chrome itself
+    fires several internal requests during boot (Component Updater
+    pinging gvt1.com, Safe Browsing list refresh, telemetry pings)
+    that sail past the persistent context's setExtraHTTPHeaders
+    layer. Without a session id we cannot resolve a bearer, so the
+    pusher dead-letters every capture with a `Missing or malformed
+    bearer` 401. None of those flows belong to the operator's run
+    anyway, so dropping them keeps the queue clean.
+    """
+    session_id = _resolve_session_id(flow)
+
+    if session_id is None or session_id == "":
+        return
+
     _ensure_queue_dir()
     payload = _response_payload(flow)
 

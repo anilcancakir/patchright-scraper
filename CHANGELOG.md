@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## v0.4.5 (2026-05-02)
+
+Two unrelated fixes that landed in the same release because they
+both bubbled up from the live host smoke matrix.
+
+mitm addon skips chrome-internal flows. Chrome's component updater,
+Safe Browsing pings, and telemetry probes fire during launch and
+sail past the persistent context's setExtraHTTPHeaders layer, so
+they reached the mitm sidecar without an `X-Kodizm-Session` header.
+Those captures used to land on the queue with `session_id="unknown"`,
+the pusher could not resolve a bearer, and Laravel rejected them
+with 401 `invalid_bearer` for every chrome boot. Drop the flow at
+the addon when no session header is present so the queue +
+dead-letter stay clean.
+
+Disable scraping-irrelevant chrome surfaces. Scraping never needs
+the password manager, the "Save password?" bubble, the autofill
+prompt, the translate banner, or the optimization-hints ping. Seed
+chrome's Preferences JSON before launch (kills the bubbles) and
+pass `--disable-features=PasswordLeakDetection,AutofillServerCommunication,SafeBrowsingEnhancedProtection,OptimizationHints,Translate`
+on launch (closes the leak / heuristics network surface). Mirrors
+the existing helper in poke-api/docker/chrome-worker so the same
+UX never flips back on between codebases.
+
 ## v0.4.4 (2026-05-02)
 
 Pusher Accept header. `mitm/pusher.py` now sends

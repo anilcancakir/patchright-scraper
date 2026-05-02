@@ -1,9 +1,92 @@
 import { chromium, type BrowserContext, type Page } from 'patchright';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync, readFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SessionCreate } from './types.js';
 import type { SessionState } from './steps/types.js';
+
+/**
+ * Seed chrome's user-data-dir Preferences JSON before the persistent
+ * context launches.
+ *
+ * Scraping does not need the password manager, the autofill bubble,
+ * the translate banner, or the desktop notification permission
+ * prompt. None of these can be turned off via CLI flags reliably;
+ * writing the JSON ahead of launch is the only stable kill-switch.
+ *
+ * Mirrors the helper in poke-api/docker/chrome-worker so the same
+ * UX never flips back on between codebases.
+ */
+function seedChromePreferences(profilePath: string): void {
+  const defaultDir = join(profilePath, 'Default');
+  const prefsPath = join(defaultDir, 'Preferences');
+
+  try {
+    mkdirSync(defaultDir, { recursive: true });
+  } catch {
+    return;
+  }
+
+  let prefs: Record<string, unknown> = {};
+
+  if (existsSync(prefsPath)) {
+    try {
+      prefs = JSON.parse(readFileSync(prefsPath, 'utf-8'));
+    } catch {
+      prefs = {};
+    }
+  }
+
+  const profile = (prefs['profile'] as Record<string, unknown>) ?? {};
+  const profileDefaults = (profile['default_content_setting_values'] as Record<string, unknown>) ?? {};
+  const autofill = (prefs['autofill'] as Record<string, unknown>) ?? {};
+  const translate = (prefs['translate'] as Record<string, unknown>) ?? {};
+
+  prefs['credentials_enable_service'] = false;
+  prefs['credentials_enable_autosignin'] = false;
+  prefs['profile'] = {
+    ...profile,
+    password_manager_enabled: false,
+    default_content_setting_values: {
+      ...profileDefaults,
+      notifications: 2,
+    },
+  };
+  prefs['autofill'] = {
+    ...autofill,
+    enabled: false,
+    credit_card_enabled: false,
+    profile_enabled: false,
+  };
+  prefs['translate'] = {
+    ...translate,
+    enabled: false,
+  };
+
+  try {
+    writeFileSync(prefsPath, JSON.stringify(prefs), { encoding: 'utf-8' });
+  } catch {
+    // Read-only profile dir; the disable-features flag still kicks in
+    // for the launch but the password / translate bubbles may flicker.
+  }
+}
+
+/**
+ * Belt-and-braces chrome flags that complement the Preferences seed.
+ *
+ * `PasswordLeakDetection` removes the password leak surface (no
+ * outbound request to the leak service), `AutofillServerCommunication`
+ * stops the autofill heuristics ping, `SafeBrowsingEnhancedProtection`
+ * silences the post-install onboarding card. The Preferences seed
+ * above is what actually kills the bubbles.
+ */
+const SCRAPING_DISABLE_FEATURES = [
+  'PasswordLeakDetection',
+  'AutofillServerCommunication',
+  'SafeBrowsingEnhancedProtection',
+  'OptimizationHints',
+  'Translate',
+].join(',');
 
 interface ManagedSession {
   id: string;
@@ -121,6 +204,7 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
   const subdir = input.identityHash ?? id;
   const profilePath = join(PROFILE_ROOT, subdir);
   mkdirSync(profilePath, { recursive: true });
+  seedChromePreferences(profilePath);
 
   const extraHeaders: Record<string, string> = {
     'X-Kodizm-Session': id,
@@ -140,6 +224,14 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
       // signs intercepted responses with its own CA, so the browser
       // must accept the cert chain when the caller flags it.
       ignoreHTTPSErrors: input.ignoreHTTPSErrors ?? false,
+      // Strip chrome's password manager / autofill / translate /
+      // optimization-hints surfaces. Scraping never wants the
+      // bubbles, the leak ping, or the heuristics ping; the
+      // Preferences seed above silences the bubbles, this flag
+      // closes the network surface.
+      args: [
+        `--disable-features=${SCRAPING_DISABLE_FEATURES}`,
+      ],
     }),
   );
 
