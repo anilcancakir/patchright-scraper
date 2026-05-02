@@ -38,13 +38,25 @@ const VNC_IDLE_MS = Number(process.env.VNC_IDLE_MS ?? 15 * 60 * 1000);
  * Serialise the launch step through a single-slot promise queue:
  * createSession can still run mid-flow code in parallel (cookies +
  * bearer registry + state hooks), but only one chrome boot happens
- * at a time. The cost is per-request: ~1-3s queue wait under a
- * burst, but every call eventually succeeds with HTTP 200.
+ * at a time. After every successful launch we hold the lock for an
+ * extra `LAUNCH_SETTLE_MS` so chrome's zygote + GPU + network
+ * service processes finish their handshake before the next waiter
+ * spawns its own chrome and they stop tripping each other's
+ * "Target ... has been closed" race.
  */
+const LAUNCH_SETTLE_MS = Number(process.env.PATCHRIGHT_LAUNCH_SETTLE_MS ?? 1200);
+
 let launchQueue: Promise<unknown> = Promise.resolve();
 
 function withLaunchLock<T>(callback: () => Promise<T>): Promise<T> {
-  const next = launchQueue.then(callback, callback);
+  const next = launchQueue.then(async () => {
+    const result = await callback();
+    if (LAUNCH_SETTLE_MS > 0) {
+      await new Promise((resolve) => setTimeout(resolve, LAUNCH_SETTLE_MS));
+    }
+    return result;
+  });
+
   // Swallow the result type so the queue chain stays unknown-typed and
   // a single failed launch never blocks subsequent waiters from running.
   launchQueue = next.catch(() => undefined);

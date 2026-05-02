@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.4.3 (2026-05-02)
+
+Launch settle delay. v0.4.2's mutex serialised the launch call but
+chrome's zygote / GPU / network-service spawn races still tripped
+the next waiter with a "Target page, context or browser has been
+closed" error in stress runs. Hold the lock for an extra
+`PATCHRIGHT_LAUNCH_SETTLE_MS` (1200ms default) after each
+successful launch so the previous chrome's worker processes finish
+their handshake before the next chrome boots.
+
+The settle window is env-tunable so operators can profile their own
+hardware: faster hosts can drop to 600ms; slower hosts may need
+1500-2000ms.
+
 ## v0.4.2 (2026-05-02)
 
 Concurrent createSession serialisation. Pool dispatches that fire
