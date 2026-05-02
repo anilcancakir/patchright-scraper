@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.4.4 (2026-05-02)
+
+Pusher Accept header. `mitm/pusher.py` now sends
+`Accept: application/json` on every push so Laravel renders auth +
+validation failures as JSON envelopes instead of the default
+web-style 302 redirect to `/`. Without the header the pusher
+dead-lettered every file on an apparent 302 even when the bearer
+and payload were perfectly valid.
+
 ## v0.4.3 (2026-05-02)
 
 Launch settle delay. v0.4.2's mutex serialised the launch call but

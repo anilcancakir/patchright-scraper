@@ -44,7 +44,14 @@ def _headers(per_flow_bearer: Optional[str] = None) -> dict[str, str]:
     legacy single-session image and any flow whose session id missed
     the bearer registry.
     """
-    headers = {"Content-Type": "application/json"}
+    # Accept header forces Laravel to surface validation + auth
+    # failures as JSON instead of the default web-style 302 redirect
+    # to /. Without it the upstream pusher dead-letters the file on
+    # an unrelated redirect even when the bearer + payload are valid.
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
 
     bearer = per_flow_bearer or PUSH_TOKEN
     if bearer:
