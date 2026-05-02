@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## v0.4.2 (2026-05-02)
+
+Concurrent createSession serialisation. Pool dispatches that fire
+multiple createSession requests in parallel were spawning chrome
+processes in the same millisecond, racing on the user-data-dir
+lock + the connection negotiation, and returning HTTP 500 to
+upstream callers in the 10-20% range under stress.
+
+session.ts now routes every `chromium.launchPersistentContext`
+call through a single-slot promise queue. Createsession can still
+run mid-flow code in parallel (bearer registry, state hooks,
+extraHTTPHeaders), but only one chrome boot happens at a time.
+Cost: per-request 1-3s queue wait under a burst. Benefit: every
+call eventually returns HTTP 200; no more 500s leaking to user
+dispatch flows.
+
+The lock is in-process only; horizontal scale (>1 pool container
+per host) still gives parallel throughput because each container
+runs its own queue.
+
 ## v0.4.1 (2026-05-02)
 
 Pool mitm capture pipeline fix. Pool sessions now route chrome

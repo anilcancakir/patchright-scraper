@@ -25,6 +25,33 @@ const SESSION_BEARERS_PATH = process.env.SESSION_BEARERS_PATH ?? '/data/session-
 const CHROME_IDLE_MS = Number(process.env.CHROME_IDLE_MS ?? process.env.SESSION_IDLE_MS ?? 60 * 60 * 1000);
 const VNC_IDLE_MS = Number(process.env.VNC_IDLE_MS ?? 15 * 60 * 1000);
 
+/**
+ * Concurrency gate for `chromium.launchPersistentContext` calls.
+ *
+ * Pool mode lets N sessions share one container, so a single dispatch
+ * batch routinely fires multiple createSession requests in parallel.
+ * Patchright (and Playwright underneath) starts a fresh chrome process
+ * per persistent context; spawning 5+ chrome processes in the same
+ * millisecond races on the user-data-dir lock + the chrome connection
+ * negotiation, returning HTTP 500s to upstream callers.
+ *
+ * Serialise the launch step through a single-slot promise queue:
+ * createSession can still run mid-flow code in parallel (cookies +
+ * bearer registry + state hooks), but only one chrome boot happens
+ * at a time. The cost is per-request: ~1-3s queue wait under a
+ * burst, but every call eventually succeeds with HTTP 200.
+ */
+let launchQueue: Promise<unknown> = Promise.resolve();
+
+function withLaunchLock<T>(callback: () => Promise<T>): Promise<T> {
+  const next = launchQueue.then(callback, callback);
+  // Swallow the result type so the queue chain stays unknown-typed and
+  // a single failed launch never blocks subsequent waiters from running.
+  launchQueue = next.catch(() => undefined);
+
+  return next;
+}
+
 export interface CreateSessionInput extends SessionCreate {
   loginSignature?: string;
   identityHash?: string;
@@ -87,20 +114,22 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
     'X-Kodizm-Session': id,
   };
 
-  const context = await chromium.launchPersistentContext(profilePath, {
-    channel: 'chrome',
-    headless: process.env.DISPLAY ? false : true,
-    proxy: input.proxy,
-    userAgent: input.userAgent,
-    locale: input.locale,
-    viewport: input.viewport ?? null,
-    extraHTTPHeaders: extraHeaders,
-    // Pool mode routes chrome through the in-container mitm sidecar
-    // so every TLS request lands on the capture queue. mitmproxy
-    // signs intercepted responses with its own CA, so the browser
-    // must accept the cert chain when the caller flags it.
-    ignoreHTTPSErrors: input.ignoreHTTPSErrors ?? false,
-  });
+  const context = await withLaunchLock(() =>
+    chromium.launchPersistentContext(profilePath, {
+      channel: 'chrome',
+      headless: process.env.DISPLAY ? false : true,
+      proxy: input.proxy,
+      userAgent: input.userAgent,
+      locale: input.locale,
+      viewport: input.viewport ?? null,
+      extraHTTPHeaders: extraHeaders,
+      // Pool mode routes chrome through the in-container mitm sidecar
+      // so every TLS request lands on the capture queue. mitmproxy
+      // signs intercepted responses with its own CA, so the browser
+      // must accept the cert chain when the caller flags it.
+      ignoreHTTPSErrors: input.ignoreHTTPSErrors ?? false,
+    }),
+  );
 
   const page = context.pages()[0] ?? (await context.newPage());
 
