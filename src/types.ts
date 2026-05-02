@@ -38,6 +38,7 @@ export const SessionCreateSchema = z.object({
     .object({ width: z.number().int(), height: z.number().int() })
     .optional(),
   bearer: z.string().optional(),
+  ignoreHTTPSErrors: z.boolean().optional(),
 });
 
 export type ScrapeRequest = z.infer<typeof ScrapeRequestSchema>;

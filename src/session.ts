@@ -95,6 +95,11 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
     locale: input.locale,
     viewport: input.viewport ?? null,
     extraHTTPHeaders: extraHeaders,
+    // Pool mode routes chrome through the in-container mitm sidecar
+    // so every TLS request lands on the capture queue. mitmproxy
+    // signs intercepted responses with its own CA, so the browser
+    // must accept the cert chain when the caller flags it.
+    ignoreHTTPSErrors: input.ignoreHTTPSErrors ?? false,
   });
 
   const page = context.pages()[0] ?? (await context.newPage());

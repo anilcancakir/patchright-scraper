@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## v0.4.1 (2026-05-02)
+
+Pool mitm capture pipeline fix. Pool sessions now route chrome
+through the in-container mitm sidecar and accept the sidecar's
+self-signed CA chain so every TLS request lands on the capture
+queue.
+
+Added:
+
+- `SessionCreate.ignoreHTTPSErrors` (optional boolean). When true,
+  `chromium.launchPersistentContext` opens the context with cert
+  validation off so flows proxied through mitmdump never trip
+  `ERR_CERT_AUTHORITY_INVALID`. Off by default to keep direct
+  scrape paths strict.
+
+Upstream PHP wiring (`PatchrightPoolProvisioner::mintInContainerSession`)
+now sends `proxy: { server: 'http://127.0.0.1:8080' }` plus
+`ignoreHTTPSErrors: true` whenever the Session row carries a
+mitm bearer.
+
 ## v0.4.0 (2026-05-02)
 
 Pool mode foundations. Same image, same `POST /v1/sessions` contract,
