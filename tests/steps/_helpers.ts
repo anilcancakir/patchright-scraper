@@ -1,5 +1,32 @@
 import { vi } from 'vitest';
-import type { StepContext } from '../../src/steps/types.js';
+import type { StepContext, StepExecutor, StepResult } from '../../src/steps/types.js';
+
+/**
+ * Run a step the way the router runs it: config through the executor's
+ * own schema first, parsed output into execute().
+ *
+ * Calling execute() with a raw object skips every default and every
+ * transform the schema declares, so a test written that way asserts
+ * against a shape production never sees. That is not hypothetical: the
+ * locator field normalises a single candidate into a one-element list
+ * on parse, and tests bypassing it were handing execute() an object
+ * where it expects an array.
+ */
+export async function runStep(
+  executor: StepExecutor,
+  ctx: StepContext,
+  config: unknown,
+): Promise<StepResult> {
+  const parsed = executor.schema.safeParse(config);
+
+  if (!parsed.success) {
+    throw new Error(
+      `step "${executor.name}" rejected its config: ${JSON.stringify(parsed.error.issues)}`,
+    );
+  }
+
+  return executor.execute(ctx, parsed.data);
+}
 
 export interface MockLocator {
   click: ReturnType<typeof vi.fn>;
@@ -70,7 +97,10 @@ export interface MockPage {
   waitForLoadState: ReturnType<typeof vi.fn>;
   waitForURL: ReturnType<typeof vi.fn>;
   waitForFunction: ReturnType<typeof vi.fn>;
-  keyboard: { press: ReturnType<typeof vi.fn> };
+  keyboard: {
+    press: ReturnType<typeof vi.fn>;
+    insertText: ReturnType<typeof vi.fn>;
+  };
   screenshot: ReturnType<typeof vi.fn>;
   content: ReturnType<typeof vi.fn>;
   title: ReturnType<typeof vi.fn>;
@@ -108,7 +138,10 @@ export function makePage(overrides: Partial<MockPage> = {}): MockPage {
     waitForLoadState: vi.fn(async () => undefined),
     waitForURL: vi.fn(async () => undefined),
     waitForFunction: vi.fn(async () => null),
-    keyboard: { press: vi.fn(async () => undefined) },
+    keyboard: {
+      press: vi.fn(async () => undefined),
+      insertText: vi.fn(async () => undefined),
+    },
     screenshot: vi.fn(async () => Buffer.from('IMG')),
     content: vi.fn(async () => '<html></html>'),
     title: vi.fn(async () => 'Page'),

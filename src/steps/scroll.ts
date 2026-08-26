@@ -140,3 +140,149 @@ export const scrollModal: StepExecutor = {
     };
   },
 };
+
+export const scrollAndCollect: StepExecutor = {
+  name: 'scrollAndCollect',
+  description:
+    'Scroll a virtualized list, harvesting rows on every pass and deduping by a key attribute. Use instead of scroll-then-extractDom wherever rows unmount as they leave the viewport.',
+  schema: z
+    .object({
+      name: z.string().min(1),
+      selector: z.string().min(1),
+      keySelector: z.string().min(1).optional(),
+      keyAttribute: z.string().min(1).default('href'),
+      attrs: z.array(z.string()).default([]),
+      includeText: z.boolean().default(true),
+      container: z.string().min(1).optional(),
+      maxIterations: z.number().int().positive().default(20),
+      maxRows: z.number().int().positive().default(500),
+      settleMs: z.number().int().nonnegative().default(750),
+      idleIterations: z.number().int().positive().default(2),
+      stepPx: z.number().int().positive().default(1200),
+    })
+    .strict(),
+  /**
+   * `extractDom` reads what is mounted RIGHT NOW. On a virtualized list
+   * (react-window and friends) rows are removed from the DOM as they
+   * leave the viewport, so scrolling to the bottom and then extracting
+   * returns the last screenful and silently loses everything above it.
+   * The loss is invisible: the step succeeds and the output looks like a
+   * short list rather than a broken one.
+   *
+   * So harvest on every pass and merge, keyed on something stable per
+   * row. The key is what makes this safe to run repeatedly: without it,
+   * re-reading the same rows after a short scroll would duplicate them.
+   *
+   * Termination is `idleIterations` consecutive passes that add no new
+   * key, not a scroll-height plateau. A virtualized container keeps its
+   * scrollHeight roughly constant by design (spacer divs stand in for
+   * the unmounted rows), so height is not a signal about progress here.
+   */
+  async execute(ctx, config) {
+    const c = config as {
+      name: string;
+      selector: string;
+      keySelector?: string;
+      keyAttribute: string;
+      attrs: string[];
+      includeText: boolean;
+      container?: string;
+      maxIterations: number;
+      maxRows: number;
+      settleMs: number;
+      idleIterations: number;
+      stepPx: number;
+    };
+
+    const collected = new Map<string, Record<string, string | null>>();
+    let idleHits = 0;
+    let iterations = 0;
+
+    for (; iterations < c.maxIterations; iterations += 1) {
+      const batch = await ctx.page.evaluate(
+        ({ selector, keySelector, keyAttribute, attrs, includeText }) => {
+          const rows: Array<{ key: string; row: Record<string, string | null> }> = [];
+
+          for (const el of Array.from(document.querySelectorAll(selector))) {
+            const keyEl = keySelector ? el.querySelector(keySelector) : el;
+            const key = keyEl?.getAttribute(keyAttribute) ?? null;
+
+            if (key === null || key === '') {
+              continue;
+            }
+
+            const row: Record<string, string | null> = {};
+            for (const attr of attrs) {
+              row[attr] = el.getAttribute(attr);
+            }
+            if (includeText) {
+              row.text = (el as HTMLElement).innerText ?? null;
+            }
+
+            rows.push({ key, row });
+          }
+
+          return rows;
+        },
+        {
+          selector: c.selector,
+          keySelector: c.keySelector ?? null,
+          keyAttribute: c.keyAttribute,
+          attrs: c.attrs,
+          includeText: c.includeText,
+        },
+      );
+
+      const before = collected.size;
+
+      for (const { key, row } of batch) {
+        if (!collected.has(key)) {
+          collected.set(key, row);
+        }
+      }
+
+      if (collected.size >= c.maxRows) {
+        break;
+      }
+
+      idleHits = collected.size === before ? idleHits + 1 : 0;
+
+      if (idleHits >= c.idleIterations) {
+        break;
+      }
+
+      await ctx.page.evaluate(
+        ({ container, stepPx }) => {
+          const target = container
+            ? (document.querySelector(container) as HTMLElement | null)
+            : null;
+
+          if (target) {
+            target.scrollBy({ top: stepPx });
+            return;
+          }
+
+          window.scrollBy({ top: stepPx });
+        },
+        { container: c.container ?? null, stepPx: c.stepPx },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, c.settleMs));
+    }
+
+    const rows = Array.from(collected.values()).slice(0, c.maxRows);
+
+    return {
+      ok: true,
+      output: {
+        name: c.name,
+        rows,
+        iterations,
+        // True when the sweep stopped because the list stopped growing
+        // rather than because it hit a cap. A caller that asked for 500
+        // rows and got exactly 500 with exhausted=false has more to read.
+        exhausted: idleHits >= c.idleIterations,
+      },
+    };
+  },
+};

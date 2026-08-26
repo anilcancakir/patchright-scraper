@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+## v0.5.0 (2026-08-26)
+
+Locator fallback chains, an IME-style text step, and a collector for
+virtualized lists.
+
+**`locator` now accepts a chain.** Every step that targets an element
+takes either one candidate (unchanged) or an ordered list of them; the
+schema normalises both to a list so one shape reaches the resolver.
+Resolution polls `count()` across all candidates under ONE shared
+budget rather than attempting each in turn, which would have multiplied
+the step timeout by the chain length. A candidate matching several
+elements without an `nth` is rejected rather than accepted, because
+strict mode would throw on the action anyway and taking it would skip a
+working fallback first. Every locator-bearing step now reports
+`locatorIndex` in its output, so a caller can tell that its preferred
+selector has rotted and it is running on a fallback.
+
+**New step `insertText`.** Commits text through CDP `Input.insertText`,
+the way an IME does. Rich contentEditable editors built on `beforeinput`
+(Draft.js, Lexical, ProseMirror) ignore `fill()` entirely, and
+per-character typing races the editor's own mount so the first
+characters vanish. When given a locator it CLICKS it first, because
+those editors key their edit mode off a native click-sourced focus
+event and `focus()` alone leaves them inert.
+
+**New step `scrollAndCollect`.** Harvests rows on every scroll pass and
+merges them by a key attribute. On a virtualized list rows unmount as
+they leave the viewport, so scroll-then-`extractDom` returns the last
+screenful and silently loses everything above it. Stops on consecutive
+passes that add nothing, not on a scroll-height plateau, because a
+virtualized container keeps its height roughly constant by design.
+
+**Fixed: `type` with `clear: true` called `fill('')`**, which is exactly
+the call a contentEditable ignores. The old text stayed and the new text
+appended to it. Now select-all + Backspace.
+
+**Fixed: `x-kodizm-session` was sent on every request unconditionally.**
+It exists so the mitm addon can attribute a flow to a session; with
+capture off nothing reads it and every request to the target carried a
+stable non-standard header naming us, which is a cross-request
+correlator handed over for free. Now gated on the new `captureTraffic`
+session flag, which defaults to false.
+
 ## v0.4.7 (2026-05-31)
 
 x11vnc view-only password support via `-passwdfile`. When both `VNC_PASSWORD`

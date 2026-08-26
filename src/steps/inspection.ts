@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { LocatorSpec, resolveLocator } from './locator.js';
+import { LocatorSpec, type LocatorCandidate, resolveLocator } from './locator.js';
+
+type Candidates = LocatorCandidate[];
 import type { StepExecutor } from './types.js';
 
 const TimeoutMs = z.number().int().positive().max(120_000);
@@ -18,7 +20,7 @@ export const screenshot: StepExecutor = {
   async execute(ctx, config) {
     const c = config as {
       mode: 'viewport' | 'full' | 'element';
-      locator?: LocatorSpec;
+      locator?: Candidates;
       encoding: 'base64' | 'binary';
       timeout: number;
     };
@@ -28,7 +30,8 @@ export const screenshot: StepExecutor = {
       if (c.locator === undefined) {
         return { ok: false, error: 'screenshot: element mode requires a locator' };
       }
-      buffer = await resolveLocator(ctx.page, c.locator).screenshot({ timeout: c.timeout });
+      const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+      buffer = await target.locator.screenshot({ timeout: target.remainingMs });
     } else {
       buffer = await ctx.page.screenshot({ fullPage: c.mode === 'full', timeout: c.timeout });
     }
@@ -57,18 +60,18 @@ export const content: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator?: LocatorSpec; timeout: number };
+    const c = config as { locator?: Candidates; timeout: number };
 
     if (c.locator === undefined) {
       const html = await ctx.page.content();
       return { ok: true, output: { html } };
     }
 
-    const handle = resolveLocator(ctx.page, c.locator);
-    await handle.waitFor({ state: 'attached', timeout: c.timeout });
-    const html = await handle.evaluate((el) => (el as Element).outerHTML);
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    await target.locator.waitFor({ state: 'attached', timeout: target.remainingMs });
+    const html = await target.locator.evaluate((el) => (el as Element).outerHTML);
 
-    return { ok: true, output: { html } };
+    return { ok: true, output: { html, locatorIndex: target.index } };
   },
 };
 
@@ -82,10 +85,11 @@ export const innerText: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: LocatorSpec; timeout: number };
-    const text = await resolveLocator(ctx.page, c.locator).innerText({ timeout: c.timeout });
+    const c = config as { locator: Candidates; timeout: number };
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    const text = await target.locator.innerText({ timeout: target.remainingMs });
 
-    return { ok: true, output: { text } };
+    return { ok: true, output: { text, locatorIndex: target.index } };
   },
 };
 
@@ -100,12 +104,13 @@ export const getAttribute: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: LocatorSpec; name: string; timeout: number };
-    const value = await resolveLocator(ctx.page, c.locator).getAttribute(c.name, {
-      timeout: c.timeout,
+    const c = config as { locator: Candidates; name: string; timeout: number };
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    const value = await target.locator.getAttribute(c.name, {
+      timeout: target.remainingMs,
     });
 
-    return { ok: true, output: { name: c.name, value } };
+    return { ok: true, output: { name: c.name, value, locatorIndex: target.index } };
   },
 };
 
@@ -119,10 +124,11 @@ export const inputValue: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: LocatorSpec; timeout: number };
-    const value = await resolveLocator(ctx.page, c.locator).inputValue({ timeout: c.timeout });
+    const c = config as { locator: Candidates; timeout: number };
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    const value = await target.locator.inputValue({ timeout: target.remainingMs });
 
-    return { ok: true, output: { value } };
+    return { ok: true, output: { value, locatorIndex: target.index } };
   },
 };
 

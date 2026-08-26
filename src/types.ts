@@ -39,6 +39,19 @@ export const SessionCreateSchema = z.object({
     .optional(),
   bearer: z.string().optional(),
   ignoreHTTPSErrors: z.boolean().optional(),
+  /**
+   * Whether this session's traffic is being captured.
+   *
+   * Gates the `x-kodizm-session` request header, which exists only so
+   * the mitm addon can attribute a flow back to a session. With capture
+   * off nothing consumes it and every request to the target carries a
+   * stable, non-standard header naming us, which is a free cross-request
+   * correlator handed to whoever is on the other end.
+   *
+   * Defaults to false: a session that does not say it is being captured
+   * is not, and the quiet default is the safe one.
+   */
+  captureTraffic: z.boolean().default(false),
 });
 
 export type ScrapeRequest = z.infer<typeof ScrapeRequestSchema>;

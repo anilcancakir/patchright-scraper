@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { LocatorSpec, resolveLocator } from './locator.js';
+import { LocatorSpec, type LocatorCandidate, resolveLocatorOrFirst } from './locator.js';
+
+type Candidates = LocatorCandidate[];
 import type { StepExecutor, StepResult } from './types.js';
 
 /**
@@ -50,7 +52,7 @@ export const expect: StepExecutor = {
   async execute(ctx, config) {
     const c = config as {
       assertion: LocatorAssertionName | PageAssertionName;
-      locator?: LocatorSpec;
+      locator?: Candidates;
       value?: unknown;
       regex: boolean;
       timeout: number;
@@ -64,9 +66,18 @@ export const expect: StepExecutor = {
       return { ok: false, error: `expect: ${c.assertion} requires a locator` };
     }
 
-    const locator = resolveLocator(ctx.page, c.locator);
+    // resolveLocatorOrFirst, not resolveLocator: toBeHidden is
+    // satisfied BY nothing matching, so throwing on an empty page
+    // would fail the assertion it should have passed. The assertion
+    // owns its own timeout and its own opinion about absence.
+    const target = await resolveLocatorOrFirst(ctx.page, c.locator);
 
-    return runLocatorAssertion(locator, c.assertion as LocatorAssertionName, c.value, c.timeout);
+    return runLocatorAssertion(
+      target.locator,
+      c.assertion as LocatorAssertionName,
+      c.value,
+      c.timeout,
+    );
   },
 };
 

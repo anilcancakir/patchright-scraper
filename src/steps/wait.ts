@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { LocatorSpec, resolveLocator } from './locator.js';
+import { LocatorSpec, type LocatorCandidate, resolveLocatorOrFirst } from './locator.js';
+
+type Candidates = LocatorCandidate[];
 import type { StepExecutor } from './types.js';
 
 const TimeoutMs = z.number().int().positive().max(120_000);
@@ -16,14 +18,18 @@ export const waitForSelector: StepExecutor = {
     .strict(),
   async execute(ctx, config) {
     const c = config as {
-      locator: LocatorSpec;
+      locator: Candidates;
       state: 'attached' | 'detached' | 'visible' | 'hidden';
       timeout: number;
     };
-    const locator = resolveLocator(ctx.page, c.locator);
-    await locator.waitFor({ state: c.state, timeout: c.timeout });
+    // resolveLocatorOrFirst, not resolveLocator: two of this step's
+    // four states ('detached', 'hidden') are satisfied BY nothing
+    // matching, so a resolver that threw on an empty page would turn a
+    // passing wait into an error. waitFor() owns the waiting.
+    const target = await resolveLocatorOrFirst(ctx.page, c.locator);
+    await target.locator.waitFor({ state: c.state, timeout: c.timeout });
 
-    return { ok: true, output: { state: c.state } };
+    return { ok: true, output: { state: c.state, locatorIndex: target.index } };
   },
 };
 

@@ -8,14 +8,14 @@ import {
   inputValue,
   screenshot,
 } from '../../src/steps/inspection.js';
-import { makeCtx, makeLocator, makePage } from './_helpers.js';
+import { makeCtx, makeLocator, makePage, runStep } from './_helpers.js';
 
 describe('inspection primitives (Playwright shape)', () => {
   it('screenshot returns base64 by default', async () => {
     const page = makePage({ screenshot: vi.fn(async () => Buffer.from('PNG-DATA')) });
     const { ctx } = makeCtx({ page });
 
-    const result = await screenshot.execute(ctx, {
+    const result = await runStep(screenshot, ctx, {
       mode: 'viewport',
       encoding: 'base64',
       timeout: 5_000,
@@ -29,7 +29,7 @@ describe('inspection primitives (Playwright shape)', () => {
   it('screenshot in element mode requires a locator', async () => {
     const { ctx } = makeCtx();
 
-    const result = await screenshot.execute(ctx, {
+    const result = await runStep(screenshot, ctx, {
       mode: 'element',
       encoding: 'base64',
       timeout: 5_000,
@@ -43,7 +43,7 @@ describe('inspection primitives (Playwright shape)', () => {
     const page = makePage({ content: vi.fn(async () => '<html><body>hi</body></html>') });
     const { ctx } = makeCtx({ page });
 
-    const result = await content.execute(ctx, { timeout: 5_000 });
+    const result = await runStep(content, ctx, { timeout: 5_000 });
 
     expect(result.ok).toBe(true);
     expect((result.output as { html: string }).html).toContain('hi');
@@ -54,7 +54,7 @@ describe('inspection primitives (Playwright shape)', () => {
     const page = makePage({ locator: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    const result = await innerText.execute(ctx, {
+    const result = await runStep(innerText, ctx, {
       locator: { selector: 'h1' },
       timeout: 5_000,
     });
@@ -68,7 +68,7 @@ describe('inspection primitives (Playwright shape)', () => {
     const page = makePage({ locator: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    const result = await getAttribute.execute(ctx, {
+    const result = await runStep(getAttribute, ctx, {
       locator: { selector: 'button' },
       name: 'type',
       timeout: 5_000,
@@ -83,7 +83,7 @@ describe('inspection primitives (Playwright shape)', () => {
     const page = makePage({ getByTestId: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    const result = await inputValue.execute(ctx, {
+    const result = await runStep(inputValue, ctx, {
       locator: { testid: 'email' },
       timeout: 5_000,
     });
@@ -96,7 +96,7 @@ describe('inspection primitives (Playwright shape)', () => {
     const page = makePage({ evaluate: evalSpy as never });
     const { ctx } = makeCtx({ page });
 
-    const result = await evaluate.execute(ctx, {
+    const result = await runStep(evaluate, ctx, {
       expression: 'function(a,b){return a+b}',
       args: [1, 2],
     });
@@ -117,7 +117,7 @@ describe('inspection primitives (Playwright shape)', () => {
     });
     const { ctx } = makeCtx({ page });
 
-    const result = await extractDom.execute(ctx, {
+    const result = await runStep(extractDom, ctx, {
       name: 'links',
       selector: 'a',
       attrs: ['href'],

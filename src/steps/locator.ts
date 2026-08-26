@@ -87,7 +87,7 @@ export const TitleLocator = z
  * Disjoint union over every supported locator variant. Each variant has
  * a unique discriminator key so the union is unambiguous on parse.
  */
-export const LocatorSpec = z.union([
+export const LocatorCandidateSpec = z.union([
   SelectorLocator,
   RoleLocator,
   TextLocator,
@@ -98,27 +98,168 @@ export const LocatorSpec = z.union([
   TitleLocator,
 ]);
 
-export type LocatorSpec = z.infer<typeof LocatorSpec>;
+export type LocatorCandidate = z.infer<typeof LocatorCandidateSpec>;
 
 /**
- * Resolve a {@link LocatorSpec} into a Playwright {@link Locator} bound
- * to the supplied page. Each variant maps to its canonical Playwright
- * helper: `selector` to `page.locator(...)`, `role` to `page.getByRole`,
- * and so on. Roles and text honor Playwright's `exact` option. When the
- * spec carries `nth`, the resolved locator is narrowed via `.nth(n)` so
- * multi-match selectors do not trip Playwright's strict mode.
+ * What a step's `locator` field accepts on the wire.
+ *
+ * Either one candidate (every recipe written before chains existed) or
+ * an ordered list of them, normalised to a list by the transform so
+ * exactly one shape reaches {@link resolveLocator}. Accepting both is
+ * not a compatibility shim: a recipe targeting a stable element has no
+ * use for a fallback, and forcing it to write a one-element array would
+ * be noise.
+ *
+ * The list is ordered by preference, not by likelihood. The first
+ * candidate that matches wins, so candidate 0 should be the one the
+ * recipe author actually means and the rest are what to reach for when
+ * the site moves under it.
  */
-export function resolveLocator(page: Page, spec: LocatorSpec): Locator {
-  const base = baseLocator(page, spec);
+export const LocatorSpec = z
+  .union([LocatorCandidateSpec, z.array(LocatorCandidateSpec).min(1)])
+  .transform((value): LocatorCandidate[] => (Array.isArray(value) ? value : [value]));
 
-  if ('nth' in spec && typeof spec.nth === 'number') {
-    return base.nth(spec.nth);
-  }
+export type LocatorSpec = z.infer<typeof LocatorSpec>;
 
-  return base;
+/** A matched locator plus which candidate produced it. */
+export interface ResolvedLocator {
+  locator: Locator;
+  /** Index into the candidate list. 0 means the preferred one matched. */
+  index: number;
+  /** Milliseconds left of the resolution budget, for the action to spend. */
+  remainingMs: number;
 }
 
-function baseLocator(page: Page, spec: LocatorSpec): Locator {
+/** No candidate matched inside the budget. */
+export class LocatorUnresolvedError extends Error {
+  constructor(candidates: LocatorCandidate[], timeout: number) {
+    super(
+      `No locator candidate matched within ${timeout}ms. Tried: ${JSON.stringify(candidates)}`,
+    );
+    this.name = 'LocatorUnresolvedError';
+  }
+}
+
+const SWEEP_INTERVAL_MS = 100;
+
+/**
+ * Resolve the first candidate that matches exactly one element.
+ *
+ * Resolution polls `count()` rather than attempting the action, and it
+ * does so against ONE shared budget. Attempting each candidate in turn
+ * would multiply the step's timeout by the number of candidates, which
+ * on a three-candidate chain with the default 10s turns one missing
+ * element into half a minute of dead wall clock.
+ *
+ * A candidate matching more than one element without an `nth` is
+ * REJECTED rather than accepted. Playwright strict mode would throw on
+ * the subsequent action, so taking it would skip the working fallback
+ * and then fail anyway, which is the worst of both.
+ *
+ * `count()` does not auto-wait, so the sweep is what waits: candidates
+ * are re-checked every 100ms until one matches or the budget runs out.
+ * Whatever is left of the budget goes to the caller, so a chain cannot
+ * spend the resolution budget and then a fresh action timeout on top.
+ */
+export async function resolveLocator(
+  page: Page,
+  candidates: LocatorCandidate[],
+  timeout: number,
+): Promise<ResolvedLocator> {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeout;
+
+  for (;;) {
+    for (const [index, candidate] of candidates.entries()) {
+      const match = await matchCandidate(page, candidate);
+
+      if (match === null) {
+        continue;
+      }
+
+      return {
+        locator: match,
+        index,
+        remainingMs: Math.max(0, deadline - Date.now()),
+      };
+    }
+
+    if (Date.now() >= deadline) {
+      throw new LocatorUnresolvedError(candidates, timeout);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, SWEEP_INTERVAL_MS));
+  }
+}
+
+/**
+ * One candidate against the page right now. Null when it matches
+ * nothing, and null when it matches several without an `nth` to pick
+ * one: strict mode would throw on the action, so taking it would skip a
+ * working fallback and then fail anyway.
+ */
+async function matchCandidate(page: Page, candidate: LocatorCandidate): Promise<Locator | null> {
+  const base = baseLocator(page, candidate);
+  const nth = candidate.nth;
+  const count = await base.count();
+
+  if (count === 0) {
+    return null;
+  }
+
+  if (count > 1 && typeof nth !== 'number') {
+    return null;
+  }
+
+  return typeof nth === 'number' ? base.nth(nth) : base;
+}
+
+/**
+ * Resolve for a step that has its own waiting and its own opinion about
+ * absence: `expect` and `waitForSelector`.
+ *
+ * One sweep, no polling, and no throw. Those steps assert about a state
+ * the element may legitimately not be in yet, and two of their modes
+ * (`toBeHidden`, `state: 'hidden'`) are satisfied precisely BY nothing
+ * matching, so a resolver that threw on an empty page would turn a
+ * passing assertion into an error. Falling back to candidate 0 hands the
+ * step a locator to assert against and lets its own timeout do the
+ * waiting, which is exactly what a single-candidate spec did before
+ * chains existed.
+ */
+export async function resolveLocatorOrFirst(
+  page: Page,
+  candidates: LocatorCandidate[],
+): Promise<ResolvedLocator> {
+  for (const [index, candidate] of candidates.entries()) {
+    const match = await matchCandidate(page, candidate);
+
+    if (match !== null) {
+      return { locator: match, index, remainingMs: 0 };
+    }
+  }
+
+  // Nothing on the page right now. Hand back the preferred candidate so
+  // the step asserts against what the author meant; an absence assertion
+  // passes and a presence assertion fails with Playwright's own message
+  // naming that selector, rather than ours naming all of them.
+  const first = candidates[0];
+
+  if (first === undefined) {
+    throw new LocatorUnresolvedError(candidates, 0);
+  }
+
+  const base = baseLocator(page, first);
+  const nth = first.nth;
+
+  return {
+    locator: typeof nth === 'number' ? base.nth(nth) : base,
+    index: 0,
+    remainingMs: 0,
+  };
+}
+
+function baseLocator(page: Page, spec: LocatorCandidate): Locator {
   if ('selector' in spec) {
     return page.locator(spec.selector);
   }

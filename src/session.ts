@@ -206,9 +206,14 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
   mkdirSync(profilePath, { recursive: true });
   seedChromePreferences(profilePath);
 
-  const extraHeaders: Record<string, string> = {
-    'X-Kodizm-Session': id,
-  };
+  // Only stamped when something is listening for it. The header exists
+  // so the mitm addon can attribute a flow to a session; with capture
+  // off nothing reads it and every request to the target would carry a
+  // stable non-standard header naming us, which is a cross-request
+  // correlator we would be handing over for free.
+  const extraHeaders: Record<string, string> = input.captureTraffic
+    ? { 'X-Kodizm-Session': id }
+    : {};
 
   const context = await withLaunchLock(() =>
     chromium.launchPersistentContext(profilePath, {
@@ -245,14 +250,16 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
   // the addon resolves session_id off it, and the capture pipeline
   // attributes flows correctly even in pool mode where N sessions
   // share one container.
-  await context.route('**/*', async (route) => {
-    const headers = {
-      ...route.request().headers(),
-      'x-kodizm-session': id,
-    };
+  if (input.captureTraffic) {
+    await context.route('**/*', async (route) => {
+      const headers = {
+        ...route.request().headers(),
+        'x-kodizm-session': id,
+      };
 
-    await route.continue({ headers });
-  });
+      await route.continue({ headers });
+    });
+  }
 
   const page = context.pages()[0] ?? (await context.newPage());
 

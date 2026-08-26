@@ -2,10 +2,17 @@ import { mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { LocatorSpec, resolveLocator } from './locator.js';
+import { LocatorSpec, type LocatorCandidate, resolveLocator } from './locator.js';
 import type { StepExecutor } from './types.js';
 
 const TimeoutMs = z.number().int().positive().max(120_000);
+
+/**
+ * Locator candidates arrive normalised to a list by LocatorSpec's
+ * transform, so every step reads the same shape whether the recipe
+ * wrote one object or a fallback chain.
+ */
+type Candidates = LocatorCandidate[];
 
 export const click: StepExecutor = {
   name: 'click',
@@ -22,22 +29,23 @@ export const click: StepExecutor = {
     .strict(),
   async execute(ctx, config) {
     const c = config as {
-      locator: LocatorSpec;
+      locator: Candidates;
       button: 'left' | 'right' | 'middle';
       clickCount: number;
       delay: number;
       force: boolean;
       timeout: number;
     };
-    await resolveLocator(ctx.page, c.locator).click({
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    await target.locator.click({
       button: c.button,
       clickCount: c.clickCount,
       delay: c.delay,
       force: c.force,
-      timeout: c.timeout,
+      timeout: target.remainingMs,
     });
 
-    return { ok: true, output: { clicked: true } };
+    return { ok: true, output: { clicked: true, locatorIndex: target.index } };
   },
 };
 
@@ -55,26 +63,28 @@ export const dblclick: StepExecutor = {
     .strict(),
   async execute(ctx, config) {
     const c = config as {
-      locator: LocatorSpec;
+      locator: Candidates;
       button: 'left' | 'right' | 'middle';
       delay: number;
       force: boolean;
       timeout: number;
     };
-    await resolveLocator(ctx.page, c.locator).dblclick({
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    await target.locator.dblclick({
       button: c.button,
       delay: c.delay,
       force: c.force,
-      timeout: c.timeout,
+      timeout: target.remainingMs,
     });
 
-    return { ok: true, output: { clicked: true } };
+    return { ok: true, output: { clicked: true, locatorIndex: target.index } };
   },
 };
 
 export const fill: StepExecutor = {
   name: 'fill',
-  description: 'Fill an input/textarea instantly (no per-character delay).',
+  description:
+    'Fill a native input/textarea instantly. Does NOT work on rich contentEditable editors (Draft.js, Lexical, ProseMirror); use insertText there.',
   schema: z
     .object({
       locator: LocatorSpec,
@@ -83,10 +93,70 @@ export const fill: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: LocatorSpec; value: string; timeout: number };
-    await resolveLocator(ctx.page, c.locator).fill(c.value, { timeout: c.timeout });
+    const c = config as { locator: Candidates; value: string; timeout: number };
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    await target.locator.fill(c.value, { timeout: target.remainingMs });
 
-    return { ok: true, output: { length: c.value.length } };
+    return { ok: true, output: { length: c.value.length, locatorIndex: target.index } };
+  },
+};
+
+export const insertText: StepExecutor = {
+  name: 'insertText',
+  description:
+    'Commit text into the focused element the way an IME does. The reliable way into rich contentEditable editors that ignore fill().',
+  schema: z
+    .object({
+      locator: LocatorSpec.optional(),
+      text: z.string(),
+      clear: z.boolean().default(false),
+      timeout: TimeoutMs.default(10_000),
+    })
+    .strict(),
+  /**
+   * `keyboard.insertText` maps to CDP `Input.insertText`, which commits
+   * the whole string as a single composition event rather than
+   * synthesising per-character keydowns.
+   *
+   * Two reasons that matters. Rich editors built on `beforeinput`
+   * (Draft.js, Lexical, ProseMirror) ignore `fill()` entirely because it
+   * sets a value no controlled component reads. And per-character typing
+   * races the editor's own mount: the first characters land before the
+   * handler is listening and vanish, which reads like a flaky selector.
+   *
+   * When a locator is supplied it is CLICKED, not focused. A rich editor
+   * keys its edit mode off a native click-sourced focus event, so
+   * `focus()` alone leaves it inert and any submit button downstream
+   * stays disabled no matter what was typed.
+   */
+  async execute(ctx, config) {
+    const c = config as {
+      locator?: Candidates;
+      text: string;
+      clear: boolean;
+      timeout: number;
+    };
+
+    let locatorIndex: number | null = null;
+
+    if (c.locator !== undefined) {
+      const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+      await target.locator.click({ timeout: target.remainingMs });
+      locatorIndex = target.index;
+    }
+
+    if (c.clear) {
+      // Select-all + Backspace rather than fill(''), which is the exact
+      // call a contentEditable editor ignores. Both modifiers are sent
+      // because the container is Linux and an operator recording a
+      // recipe on macOS would otherwise write one that only works there.
+      await ctx.page.keyboard.press('ControlOrMeta+a');
+      await ctx.page.keyboard.press('Backspace');
+    }
+
+    await ctx.page.keyboard.insertText(c.text);
+
+    return { ok: true, output: { length: c.text.length, locatorIndex } };
   },
 };
 
@@ -104,20 +174,25 @@ export const type: StepExecutor = {
     .strict(),
   async execute(ctx, config) {
     const c = config as {
-      locator: LocatorSpec;
+      locator: Candidates;
       text: string;
       delay: number;
       clear: boolean;
       timeout: number;
     };
-    const target = resolveLocator(ctx.page, c.locator);
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
 
     if (c.clear) {
-      await target.fill('', { timeout: c.timeout });
+      // Was fill(''), which silently does nothing on a contentEditable
+      // and left the old text in place for the typed text to append to.
+      await target.locator.click({ timeout: target.remainingMs });
+      await ctx.page.keyboard.press('ControlOrMeta+a');
+      await ctx.page.keyboard.press('Backspace');
     }
-    await target.type(c.text, { delay: c.delay, timeout: c.timeout });
 
-    return { ok: true, output: { length: c.text.length } };
+    await target.locator.type(c.text, { delay: c.delay, timeout: target.remainingMs });
+
+    return { ok: true, output: { length: c.text.length, locatorIndex: target.index } };
   },
 };
 
@@ -129,18 +204,27 @@ export const press: StepExecutor = {
       key: z.string().min(1),
       locator: LocatorSpec.optional(),
       delay: z.number().int().nonnegative().default(0),
+      timeout: TimeoutMs.default(10_000),
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { key: string; locator?: LocatorSpec; delay: number };
+    const c = config as {
+      key: string;
+      locator?: Candidates;
+      delay: number;
+      timeout: number;
+    };
 
     if (c.locator !== undefined) {
-      await resolveLocator(ctx.page, c.locator).press(c.key, { delay: c.delay });
-    } else {
-      await ctx.page.keyboard.press(c.key, { delay: c.delay });
+      const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+      await target.locator.press(c.key, { delay: c.delay, timeout: target.remainingMs });
+
+      return { ok: true, output: { key: c.key, locatorIndex: target.index } };
     }
 
-    return { ok: true, output: { key: c.key } };
+    await ctx.page.keyboard.press(c.key, { delay: c.delay });
+
+    return { ok: true, output: { key: c.key, locatorIndex: null } };
   },
 };
 
@@ -155,10 +239,11 @@ export const hover: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: LocatorSpec; force: boolean; timeout: number };
-    await resolveLocator(ctx.page, c.locator).hover({ force: c.force, timeout: c.timeout });
+    const c = config as { locator: Candidates; force: boolean; timeout: number };
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    await target.locator.hover({ force: c.force, timeout: target.remainingMs });
 
-    return { ok: true, output: { hovered: true } };
+    return { ok: true, output: { hovered: true, locatorIndex: target.index } };
   },
 };
 
@@ -172,10 +257,11 @@ export const focus: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: LocatorSpec; timeout: number };
-    await resolveLocator(ctx.page, c.locator).focus({ timeout: c.timeout });
+    const c = config as { locator: Candidates; timeout: number };
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    await target.locator.focus({ timeout: target.remainingMs });
 
-    return { ok: true, output: { focused: true } };
+    return { ok: true, output: { focused: true, locatorIndex: target.index } };
   },
 };
 
@@ -189,10 +275,11 @@ export const blur: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: LocatorSpec; timeout: number };
-    await resolveLocator(ctx.page, c.locator).blur({ timeout: c.timeout });
+    const c = config as { locator: Candidates; timeout: number };
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    await target.locator.blur({ timeout: target.remainingMs });
 
-    return { ok: true, output: { blurred: true } };
+    return { ok: true, output: { blurred: true, locatorIndex: target.index } };
   },
 };
 
@@ -209,17 +296,27 @@ export const dragTo: StepExecutor = {
     .strict(),
   async execute(ctx, config) {
     const c = config as {
-      locator: LocatorSpec;
-      target: LocatorSpec;
+      locator: Candidates;
+      target: Candidates;
       force: boolean;
       timeout: number;
     };
-    await resolveLocator(ctx.page, c.locator).dragTo(resolveLocator(ctx.page, c.target), {
+    const source = await resolveLocator(ctx.page, c.locator, c.timeout);
+    const destination = await resolveLocator(ctx.page, c.target, source.remainingMs);
+
+    await source.locator.dragTo(destination.locator, {
       force: c.force,
-      timeout: c.timeout,
+      timeout: destination.remainingMs,
     });
 
-    return { ok: true, output: { dragged: true } };
+    return {
+      ok: true,
+      output: {
+        dragged: true,
+        locatorIndex: source.index,
+        targetLocatorIndex: destination.index,
+      },
+    };
   },
 };
 
@@ -233,10 +330,11 @@ export const scrollIntoViewIfNeeded: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: LocatorSpec; timeout: number };
-    await resolveLocator(ctx.page, c.locator).scrollIntoViewIfNeeded({ timeout: c.timeout });
+    const c = config as { locator: Candidates; timeout: number };
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    await target.locator.scrollIntoViewIfNeeded({ timeout: target.remainingMs });
 
-    return { ok: true, output: { scrolled: true } };
+    return { ok: true, output: { scrolled: true, locatorIndex: target.index } };
   },
 };
 
@@ -251,12 +349,13 @@ export const selectOption: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: LocatorSpec; values: string[]; timeout: number };
-    const selected = await resolveLocator(ctx.page, c.locator).selectOption(c.values, {
-      timeout: c.timeout,
+    const c = config as { locator: Candidates; values: string[]; timeout: number };
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    const selected = await target.locator.selectOption(c.values, {
+      timeout: target.remainingMs,
     });
 
-    return { ok: true, output: { selected } };
+    return { ok: true, output: { selected, locatorIndex: target.index } };
   },
 };
 
@@ -271,16 +370,16 @@ export const check: StepExecutor = {
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: LocatorSpec; state: boolean; timeout: number };
-    const target = resolveLocator(ctx.page, c.locator);
+    const c = config as { locator: Candidates; state: boolean; timeout: number };
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
 
     if (c.state) {
-      await target.check({ timeout: c.timeout });
+      await target.locator.check({ timeout: target.remainingMs });
     } else {
-      await target.uncheck({ timeout: c.timeout });
+      await target.locator.uncheck({ timeout: target.remainingMs });
     }
 
-    return { ok: true, output: { state: c.state } };
+    return { ok: true, output: { state: c.state, locatorIndex: target.index } };
   },
 };
 
@@ -299,7 +398,7 @@ export const setInputFiles: StepExecutor = {
     .strict(),
   async execute(ctx, config) {
     const c = config as {
-      locator: LocatorSpec;
+      locator: Candidates;
       source: 'base64' | 'url';
       payload: string;
       filename: string;
@@ -322,8 +421,10 @@ export const setInputFiles: StepExecutor = {
     const tmpFile = join(dir, c.filename);
     writeFileSync(tmpFile, buffer);
 
+    const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+
     try {
-      await resolveLocator(ctx.page, c.locator).setInputFiles({
+      await target.locator.setInputFiles({
         name: c.filename,
         mimeType: c.mimeType,
         buffer,
@@ -336,6 +437,9 @@ export const setInputFiles: StepExecutor = {
       }
     }
 
-    return { ok: true, output: { filename: c.filename, bytes: buffer.byteLength } };
+    return {
+      ok: true,
+      output: { filename: c.filename, bytes: buffer.byteLength, locatorIndex: target.index },
+    };
   },
 };

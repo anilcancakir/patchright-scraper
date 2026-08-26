@@ -8,13 +8,14 @@ import {
   fill,
   focus,
   hover,
+  insertText,
   press,
   scrollIntoViewIfNeeded,
   selectOption,
   setInputFiles,
   type,
 } from '../../src/steps/input.js';
-import { makeCtx, makeLocator, makePage } from './_helpers.js';
+import { makeCtx, makeLocator, makePage, runStep } from './_helpers.js';
 
 describe('input primitives (Playwright shape)', () => {
   it('click resolves locator and clicks with options', async () => {
@@ -22,7 +23,7 @@ describe('input primitives (Playwright shape)', () => {
     const page = makePage({ getByTestId: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    await click.execute(ctx, {
+    await runStep(click, ctx, {
       locator: { testid: 'cta' },
       button: 'left',
       clickCount: 1,
@@ -42,7 +43,7 @@ describe('input primitives (Playwright shape)', () => {
     const page = makePage({ locator: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    await dblclick.execute(ctx, {
+    await runStep(dblclick, ctx, {
       locator: { selector: '.row' },
       button: 'left',
       delay: 0,
@@ -58,7 +59,7 @@ describe('input primitives (Playwright shape)', () => {
     const page = makePage({ getByLabel: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    await fill.execute(ctx, {
+    await runStep(fill, ctx, {
       locator: { label: 'Email' },
       value: 'a@b.test',
       timeout: 5_000,
@@ -67,12 +68,16 @@ describe('input primitives (Playwright shape)', () => {
     expect(locator.fill).toHaveBeenCalledWith('a@b.test', expect.objectContaining({ timeout: 5_000 }));
   });
 
-  it('type clears first and types per character', async () => {
+  it('type clears with select-all + Backspace, not fill(empty)', async () => {
+    // clear used to call fill(''), which is exactly the call a rich
+    // contentEditable editor ignores: the old text stayed put and the
+    // typed text appended to it. Select-all + Backspace works on both a
+    // native input and a contentEditable.
     const locator = makeLocator();
     const page = makePage({ getByPlaceholder: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    await type.execute(ctx, {
+    await runStep(type, ctx, {
       locator: { placeholder: 'Search' },
       text: 'hello',
       delay: 0,
@@ -80,8 +85,39 @@ describe('input primitives (Playwright shape)', () => {
       timeout: 5_000,
     });
 
-    expect(locator.fill).toHaveBeenCalledWith('', expect.any(Object));
+    expect(locator.fill).not.toHaveBeenCalled();
+    expect(page.keyboard.press).toHaveBeenCalledWith('ControlOrMeta+a');
+    expect(page.keyboard.press).toHaveBeenCalledWith('Backspace');
     expect(locator.type).toHaveBeenCalledWith('hello', expect.objectContaining({ delay: 0 }));
+  });
+
+  it('insertText commits through the keyboard and clicks the target first', async () => {
+    // Draft.js keys its edit mode off a native click-sourced focus
+    // event, so focus() alone leaves the editor inert and any submit
+    // button downstream stays disabled no matter what was typed.
+    const locator = makeLocator();
+    const page = makePage({ getByTestId: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(insertText, ctx, {
+      locator: { testid: 'tweetTextarea_0' },
+      text: 'hello world',
+    });
+
+    expect(locator.click).toHaveBeenCalled();
+    expect(locator.fill).not.toHaveBeenCalled();
+    expect(page.keyboard.insertText).toHaveBeenCalledWith('hello world');
+    expect((result.output as { locatorIndex: number }).locatorIndex).toBe(0);
+  });
+
+  it('insertText works with no locator, against whatever holds focus', async () => {
+    const page = makePage();
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(insertText, ctx, { text: 'typed' });
+
+    expect(page.keyboard.insertText).toHaveBeenCalledWith('typed');
+    expect((result.output as { locatorIndex: number | null }).locatorIndex).toBeNull();
   });
 
   it('press uses locator.press when locator given, keyboard.press otherwise', async () => {
@@ -89,14 +125,14 @@ describe('input primitives (Playwright shape)', () => {
     const page = makePage({ getByRole: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    await press.execute(ctx, {
+    await runStep(press, ctx, {
       key: 'Enter',
       locator: { role: 'textbox' },
       delay: 0,
     });
     expect(locator.press).toHaveBeenCalledWith('Enter', expect.any(Object));
 
-    await press.execute(ctx, { key: 'Escape', delay: 0 });
+    await runStep(press, ctx, { key: 'Escape', delay: 0 });
     expect(page.keyboard.press).toHaveBeenCalledWith('Escape', expect.any(Object));
   });
 
@@ -105,10 +141,10 @@ describe('input primitives (Playwright shape)', () => {
     const page = makePage({ locator: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    await hover.execute(ctx, { locator: { selector: '.h' }, force: false, timeout: 5_000 });
-    await focus.execute(ctx, { locator: { selector: '.h' }, timeout: 5_000 });
-    await blur.execute(ctx, { locator: { selector: '.h' }, timeout: 5_000 });
-    await scrollIntoViewIfNeeded.execute(ctx, {
+    await runStep(hover, ctx, { locator: { selector: '.h' }, force: false, timeout: 5_000 });
+    await runStep(focus, ctx, { locator: { selector: '.h' }, timeout: 5_000 });
+    await runStep(blur, ctx, { locator: { selector: '.h' }, timeout: 5_000 });
+    await runStep(scrollIntoViewIfNeeded, ctx, {
       locator: { selector: '.h' },
       timeout: 5_000,
     });
@@ -128,7 +164,7 @@ describe('input primitives (Playwright shape)', () => {
     });
     const { ctx } = makeCtx({ page });
 
-    await dragTo.execute(ctx, {
+    await runStep(dragTo, ctx, {
       locator: { selector: '.from' },
       target: { selector: '.to' },
       force: false,
@@ -143,7 +179,7 @@ describe('input primitives (Playwright shape)', () => {
     const page = makePage({ getByRole: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    const result = await selectOption.execute(ctx, {
+    const result = await runStep(selectOption, ctx, {
       locator: { role: 'combobox' },
       values: ['tr'],
       timeout: 5_000,
@@ -158,10 +194,10 @@ describe('input primitives (Playwright shape)', () => {
     const page = makePage({ locator: vi.fn(() => locator) as never });
     const { ctx } = makeCtx({ page });
 
-    await check.execute(ctx, { locator: { selector: 'input.box' }, state: true, timeout: 5_000 });
+    await runStep(check, ctx, { locator: { selector: 'input.box' }, state: true, timeout: 5_000 });
     expect(locator.check).toHaveBeenCalled();
 
-    await check.execute(ctx, { locator: { selector: 'input.box' }, state: false, timeout: 5_000 });
+    await runStep(check, ctx, { locator: { selector: 'input.box' }, state: false, timeout: 5_000 });
     expect(locator.uncheck).toHaveBeenCalled();
   });
 
@@ -171,7 +207,7 @@ describe('input primitives (Playwright shape)', () => {
     const { ctx } = makeCtx({ page });
     const payload = Buffer.from('hello').toString('base64');
 
-    const result = await setInputFiles.execute(ctx, {
+    const result = await runStep(setInputFiles, ctx, {
       locator: { testid: 'upload' },
       source: 'base64',
       payload,

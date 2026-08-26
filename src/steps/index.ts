@@ -24,6 +24,7 @@ import {
   fill,
   focus,
   hover,
+  insertText,
   press,
   scrollIntoViewIfNeeded,
   selectOption,
@@ -39,7 +40,7 @@ import {
   inputValue,
   screenshot,
 } from './inspection.js';
-import { scrollBy, scrollModal, scrollUntilPlateau } from './scroll.js';
+import { scrollAndCollect, scrollBy, scrollModal, scrollUntilPlateau } from './scroll.js';
 import {
   routeBlock,
   setExtraHTTPHeaders,
@@ -74,6 +75,7 @@ const builtIns = [
   click,
   dblclick,
   fill,
+  insertText,
   type,
   press,
   hover,
@@ -96,6 +98,7 @@ const builtIns = [
   scrollBy,
   scrollUntilPlateau,
   scrollModal,
+  scrollAndCollect,
   // Page-level config
   setViewportSize,
   setUserAgent,
