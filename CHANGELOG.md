@@ -34,6 +34,14 @@ screenful and silently loses everything above it. Stops on consecutive
 passes that add nothing, not on a scroll-height plateau, because a
 virtualized container keeps its height roughly constant by design.
 
+**Hardened during review.** The budget handed back to an action now
+carries a 1s floor: Playwright reads `timeout: 0` as "no timeout" rather
+than "fail now", so a candidate matching on the final sweep would have
+left the click that followed waiting forever. And a candidate that
+THROWS (`count()` raises mid-navigation, and an unrecognised ARIA role
+raises too) no longer takes the rest of the chain with it, which was
+precisely the case a fallback exists for.
+
 **Fixed: `type` with `clear: true` called `fill('')`**, which is exactly
 the call a contentEditable ignores. The old text stayed and the new text
 appended to it. Now select-all + Backspace.

@@ -128,6 +128,43 @@ describe('locator chains', () => {
     expect(elapsed).toBeLessThan(900);
   });
 
+  it('keeps going when a candidate throws instead of simply not matching', async () => {
+    // count() is not exception-free: mid-navigation it raises "Execution
+    // context was destroyed", and an unrecognised ARIA role raises too.
+    // Candidate 0 rotting into an ERROR rather than into a non-match is
+    // exactly the case a chain exists for, so it must not take the chain
+    // down with it.
+    const exploding = makeLocator({
+      count: vi.fn(async () => {
+        throw new Error('Execution context was destroyed');
+      }),
+    } as never);
+    const working = makeLocator({ count: vi.fn(async () => 1) } as never);
+
+    const page = makePage({
+      getByTestId: vi.fn((testid: string) => (testid === 'boom' ? exploding : working)) as never,
+    });
+
+    const resolved = await resolveLocator(
+      page as never,
+      [{ testid: 'boom' }, { testid: 'fine' }],
+      1_000,
+    );
+
+    expect(resolved.index).toBe(1);
+  });
+
+  it('never hands an action a zero budget, which Playwright reads as no timeout', async () => {
+    // timeout: 0 means "wait forever" to Playwright, not "fail now", so a
+    // candidate matching on the last sweep would leave the click that
+    // follows hanging until the queue worker's own timeout kills it.
+    const { page } = pageWithTestIds({ late: 1 });
+
+    const resolved = await resolveLocator(page as never, [{ testid: 'late' }], 1);
+
+    expect(resolved.remainingMs).toBeGreaterThanOrEqual(1_000);
+  });
+
   it('reports the budget left so the action does not get a fresh timeout', async () => {
     const { page } = pageWithTestIds({ here: 1 });
 

@@ -132,15 +132,27 @@ export interface ResolvedLocator {
 
 /** No candidate matched inside the budget. */
 export class LocatorUnresolvedError extends Error {
-  constructor(candidates: LocatorCandidate[], timeout: number) {
-    super(
-      `No locator candidate matched within ${timeout}ms. Tried: ${JSON.stringify(candidates)}`,
-    );
+  constructor(candidates: LocatorCandidate[], timeout: number, reasons: string[] = []) {
+    const detail = reasons.length > 0 ? reasons.join('; ') : JSON.stringify(candidates);
+
+    super(`No locator candidate matched within ${timeout}ms. Tried: ${detail}`);
     this.name = 'LocatorUnresolvedError';
   }
 }
 
 const SWEEP_INTERVAL_MS = 100;
+
+/**
+ * Floor on the budget handed back to the action.
+ *
+ * Playwright reads `timeout: 0` as "no timeout", not "fail now", so a
+ * candidate that matches on the very last sweep would leave the click
+ * that follows waiting forever: the browser stays held, the session
+ * stays Running, and only the queue worker's own timeout ends it. A
+ * matched element deserves a real chance to be acted on, and zero must
+ * never reach an action.
+ */
+const MIN_ACTION_BUDGET_MS = 1_000;
 
 /**
  * Resolve the first candidate that matches exactly one element.
@@ -169,23 +181,40 @@ export async function resolveLocator(
   const startedAt = Date.now();
   const deadline = startedAt + timeout;
 
+  const reasons: string[] = [];
+
   for (;;) {
+    reasons.length = 0;
+
     for (const [index, candidate] of candidates.entries()) {
-      const match = await matchCandidate(page, candidate);
+      let match: Locator | null = null;
+
+      try {
+        match = await matchCandidate(page, candidate);
+      } catch (error) {
+        // A candidate that THROWS must not take the chain down with it.
+        // count() is not exception-free: mid-navigation it raises
+        // "Execution context was destroyed", and an unrecognised ARIA
+        // role raises too. Candidate 0 rotting into an error rather than
+        // into a non-match is exactly the case a fallback exists for.
+        reasons.push(`${JSON.stringify(candidate)}: ${(error as Error).message}`);
+        continue;
+      }
 
       if (match === null) {
+        reasons.push(`${JSON.stringify(candidate)}: no unambiguous match`);
         continue;
       }
 
       return {
         locator: match,
         index,
-        remainingMs: Math.max(0, deadline - Date.now()),
+        remainingMs: Math.max(MIN_ACTION_BUDGET_MS, deadline - Date.now()),
       };
     }
 
     if (Date.now() >= deadline) {
-      throw new LocatorUnresolvedError(candidates, timeout);
+      throw new LocatorUnresolvedError(candidates, timeout, reasons);
     }
 
     await new Promise((resolve) => setTimeout(resolve, SWEEP_INTERVAL_MS));
@@ -232,7 +261,17 @@ export async function resolveLocatorOrFirst(
   candidates: LocatorCandidate[],
 ): Promise<ResolvedLocator> {
   for (const [index, candidate] of candidates.entries()) {
-    const match = await matchCandidate(page, candidate);
+    let match: Locator | null = null;
+
+    try {
+      match = await matchCandidate(page, candidate);
+    } catch {
+      // Same reasoning as resolveLocator: a throwing rung is a rung that
+      // did not match, not a reason to abandon the ones after it. There
+      // is nothing to report here because this resolver never fails; the
+      // step's own assertion is what speaks.
+      continue;
+    }
 
     if (match !== null) {
       return { locator: match, index, remainingMs: 0 };
