@@ -41,7 +41,19 @@ start_vnc() {
     # IPv6 disabled (`-rfbportv6 -1`) to silence the "address already in
     # use" noise that x11vnc prints when the IPv4 listener wins the race.
     local x11vnc_args=(-display :99 -forever -shared -threads -rfbport 5900 -rfbportv6 -1 -bg -o /tmp/x11vnc.log)
-    if [[ -n "${VNC_PASSWORD:-}" ]]; then
+    if [[ -n "${VNC_PASSWORD:-}" && -n "${VNC_VIEW_PASSWORD:-}" ]]; then
+        # Write a plaintext passwdfile so x11vnc can enforce view-only for
+        # clients that authenticate with VNC_VIEW_PASSWORD. The format is:
+        #   <control-password>
+        #   __BEGIN_VIEWONLY__
+        #   <view-only-password>
+        # Entries before __BEGIN_VIEWONLY__ get full control; entries after
+        # are restricted to view-only by libvncserver's input filter.
+        local pwfile=/tmp/.vnc-passwdfile
+        printf '%s\n__BEGIN_VIEWONLY__\n%s\n' "${VNC_PASSWORD}" "${VNC_VIEW_PASSWORD}" > "${pwfile}"
+        chmod 600 "${pwfile}"
+        x11vnc_args+=(-passwdfile "${pwfile}")
+    elif [[ -n "${VNC_PASSWORD:-}" ]]; then
         local pwfile=/tmp/.vnc-pw
         x11vnc -storepasswd "${VNC_PASSWORD}" "${pwfile}" >/dev/null 2>&1
         x11vnc_args+=(-rfbauth "${pwfile}")

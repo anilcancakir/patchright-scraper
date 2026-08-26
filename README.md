@@ -53,7 +53,8 @@ Automation mode (Xvfb + VNC + mitm)
 | --------------- | ------- | --------------------------------------------------------------------- |
 | `ENABLE_XVFB`   | `0`     | Start Xvfb on `:99`, export `DISPLAY=:99`. Required for VNC and mitm. |
 | `ENABLE_VNC`    | `0`     | Start `x11vnc` (port 5900) and `websockify` + noVNC (port 6080).      |
-| `VNC_PASSWORD`  | unset   | Optional x11vnc password. LAN-only deployments may leave it unset.    |
+| `VNC_PASSWORD`      | unset   | Optional x11vnc password. LAN-only deployments may leave it unset.                                        |
+| `VNC_VIEW_PASSWORD` | unset   | Optional view-only password. When set alongside `VNC_PASSWORD`, clients authenticating with this password are enforced read-only by x11vnc (no keyboard or pointer input forwarded). Requires v0.4.7+. |
 | `ENABLE_MITM`   | `0`     | Start `mitmdump` on port 8080 with the capture addon and pusher.      |
 
 ### Browser launch

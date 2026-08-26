@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## v0.4.7 (2026-05-31)
+
+x11vnc view-only password support via `-passwdfile`. When both `VNC_PASSWORD`
+and `VNC_VIEW_PASSWORD` are set, `start_vnc()` now writes a plaintext
+passwdfile at `/tmp/.vnc-passwdfile` (chmod 600) in the format x11vnc expects:
+
+```
+<control-password>
+__BEGIN_VIEWONLY__
+<view-only-password>
+```
+
+Clients authenticating with the control password retain full keyboard and
+pointer input. Clients authenticating with the view password have input
+forwarding blocked at the libvncserver layer (not just the client side).
+
+When only `VNC_PASSWORD` is set the existing `-storepasswd`/`-rfbauth` path
+is unchanged. When neither variable is set the existing `-nopw` path is
+unchanged. No other sections of the entrypoint are affected.
+
+New environment variable: `VNC_VIEW_PASSWORD` (optional; see README).
+
 ## v0.4.6 (2026-05-02)
 
 Capture-optional architecture. The pool's mitm sidecar still ships
