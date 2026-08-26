@@ -5,7 +5,8 @@ import {
   resolveLocator,
   resolveLocatorOrFirst,
 } from '../../src/steps/locator.js';
-import { makeLocator, makePage } from './_helpers.js';
+import { waitForSelector } from '../../src/steps/wait.js';
+import { makeCtx, makeLocator, makePage, runStep } from './_helpers.js';
 
 /**
  * Build a page whose testid lookups answer per key, so a chain can be
@@ -172,6 +173,41 @@ describe('locator chains', () => {
 
     expect(resolved.remainingMs).toBeGreaterThan(0);
     expect(resolved.remainingMs).toBeLessThanOrEqual(5_000);
+  });
+});
+
+describe('waitForSelector chains', () => {
+  it('polls for a chain when waiting for an element to appear', async () => {
+    // The element is normally NOT there when this step starts, which is
+    // the whole reason it exists. A single-sweep resolver would match
+    // nothing, fall back to candidate 0 and wait on that alone, leaving
+    // every fallback in the chain dead and locatorIndex pinned at 0.
+    const { page } = pageWithTestIds({ fallback: 1 });
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(waitForSelector, ctx, {
+      locator: [{ testid: 'preferred' }, { testid: 'fallback' }],
+      state: 'visible',
+      timeout: 1_000,
+    });
+
+    expect((result.output as { locatorIndex: number }).locatorIndex).toBe(1);
+  });
+
+  it('does not poll when waiting for an element to go away', async () => {
+    // 'hidden' and 'detached' are satisfied BY nothing matching, so a
+    // resolver that threw on an empty page would fail the wait it should
+    // have passed.
+    const { page } = pageWithTestIds({});
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(waitForSelector, ctx, {
+      locator: [{ testid: 'gone' }, { testid: 'also-gone' }],
+      state: 'hidden',
+      timeout: 1_000,
+    });
+
+    expect(result.ok).toBe(true);
   });
 });
 

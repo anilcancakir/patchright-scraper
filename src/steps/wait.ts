@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { LocatorSpec, type LocatorCandidate, resolveLocatorOrFirst } from './locator.js';
+import {
+  LocatorSpec,
+  type LocatorCandidate,
+  resolveLocator,
+  resolveLocatorOrFirst,
+} from './locator.js';
 
 type Candidates = LocatorCandidate[];
 import type { StepExecutor } from './types.js';
@@ -22,12 +27,27 @@ export const waitForSelector: StepExecutor = {
       state: 'attached' | 'detached' | 'visible' | 'hidden';
       timeout: number;
     };
-    // resolveLocatorOrFirst, not resolveLocator: two of this step's
-    // four states ('detached', 'hidden') are satisfied BY nothing
-    // matching, so a resolver that threw on an empty page would turn a
-    // passing wait into an error. waitFor() owns the waiting.
-    const target = await resolveLocatorOrFirst(ctx.page, c.locator);
-    await target.locator.waitFor({ state: c.state, timeout: c.timeout });
+    // The resolver depends on what is being waited FOR.
+    //
+    // 'attached' and 'visible' mean "appear", which is the whole reason
+    // this step exists: the element is usually not there yet, so a
+    // single-sweep resolver would find nothing, fall back to candidate 0
+    // and wait on that alone. Every fallback in the chain would be dead
+    // and the step would report locatorIndex 0 forever. Poll instead.
+    //
+    // 'detached' and 'hidden' mean "go away", and those are satisfied BY
+    // nothing matching, so a resolver that threw on an empty page would
+    // turn a passing wait into an error.
+    const appearing = c.state === 'attached' || c.state === 'visible';
+
+    const target = appearing
+      ? await resolveLocator(ctx.page, c.locator, c.timeout)
+      : await resolveLocatorOrFirst(ctx.page, c.locator);
+
+    await target.locator.waitFor({
+      state: c.state,
+      timeout: appearing ? target.remainingMs : c.timeout,
+    });
 
     return { ok: true, output: { state: c.state, locatorIndex: target.index } };
   },

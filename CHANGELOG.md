@@ -42,6 +42,14 @@ THROWS (`count()` raises mid-navigation, and an unrecognised ARIA role
 raises too) no longer takes the rest of the chain with it, which was
 precisely the case a fallback exists for.
 
+**Fixed: `waitForSelector` ignored its own chain.** It resolved with the
+single-sweep resolver, so when the element had not rendered yet, which is
+the entire reason the step exists, nothing matched, it fell back to
+candidate 0 and waited on that alone. Every fallback was dead and
+`locatorIndex` was pinned at 0. It now polls for the two states that mean
+"appear" and keeps the single sweep for the two that mean "go away",
+which are satisfied by nothing matching.
+
 **Fixed: `type` with `clear: true` called `fill('')`**, which is exactly
 the call a contentEditable ignores. The old text stayed and the new text
 appended to it. Now select-all + Backspace.
