@@ -129,6 +129,22 @@ describe('locator chains', () => {
     expect(elapsed).toBeLessThan(900);
   });
 
+  it('says which problem a candidate had, because the fixes differ', async () => {
+    // "Nothing there" means the selector is wrong. "Several there" means
+    // it is right and the recipe has to say which one. Conflating them
+    // cost a live debugging session on a timeline, where one testid
+    // legitimately covers twenty articles.
+    const { page } = pageWithTestIds({ crowded: 20 });
+
+    await expect(
+      resolveLocator(page as never, [{ testid: 'crowded' }, { testid: 'absent' }], 150),
+    ).rejects.toThrow(/matched 20 elements; add "nth" to pick one/);
+
+    await expect(
+      resolveLocator(page as never, [{ testid: 'crowded' }, { testid: 'absent' }], 150),
+    ).rejects.toThrow(/matched nothing/);
+  });
+
   it('keeps going when a candidate throws instead of simply not matching', async () => {
     // count() is not exception-free: mid-navigation it raises "Execution
     // context was destroyed", and an unrecognised ARIA role raises too.

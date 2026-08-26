@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.5.1 (2026-08-26)
+
+A locator chain now says WHICH problem each candidate had. "Matched
+nothing" means the selector is wrong; "matched 20 elements; add nth to
+pick one" means it is right and the recipe has to choose. Those need
+opposite fixes and used to share one sentence, which cost a live
+debugging session on an X timeline, where one testid legitimately covers
+every article on the page.
+
 ## v0.5.0 (2026-08-26)
 
 Locator fallback chains, an IME-style text step, and a collector for

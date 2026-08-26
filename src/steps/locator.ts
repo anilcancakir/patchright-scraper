@@ -187,10 +187,10 @@ export async function resolveLocator(
     reasons.length = 0;
 
     for (const [index, candidate] of candidates.entries()) {
-      let match: Locator | null = null;
+      let outcome: { locator: Locator } | { reason: string };
 
       try {
-        match = await matchCandidate(page, candidate);
+        outcome = await matchCandidate(page, candidate);
       } catch (error) {
         // A candidate that THROWS must not take the chain down with it.
         // count() is not exception-free: mid-navigation it raises
@@ -201,13 +201,13 @@ export async function resolveLocator(
         continue;
       }
 
-      if (match === null) {
-        reasons.push(`${JSON.stringify(candidate)}: no unambiguous match`);
+      if ('reason' in outcome) {
+        reasons.push(`${JSON.stringify(candidate)}: ${outcome.reason}`);
         continue;
       }
 
       return {
-        locator: match,
+        locator: outcome.locator,
         index,
         remainingMs: Math.max(MIN_ACTION_BUDGET_MS, deadline - Date.now()),
       };
@@ -227,20 +227,28 @@ export async function resolveLocator(
  * one: strict mode would throw on the action, so taking it would skip a
  * working fallback and then fail anyway.
  */
-async function matchCandidate(page: Page, candidate: LocatorCandidate): Promise<Locator | null> {
+async function matchCandidate(
+  page: Page,
+  candidate: LocatorCandidate,
+): Promise<{ locator: Locator } | { reason: string }> {
   const base = baseLocator(page, candidate);
   const nth = candidate.nth;
   const count = await base.count();
 
   if (count === 0) {
-    return null;
+    return { reason: 'matched nothing' };
   }
 
+  // "Nothing there" and "several there" need opposite fixes, so they must
+  // not share a sentence. The first means the selector is wrong; the
+  // second means the selector is right and the recipe has to say WHICH,
+  // which is the common case on any list (a timeline is twenty articles
+  // under one testid).
   if (count > 1 && typeof nth !== 'number') {
-    return null;
+    return { reason: `matched ${count} elements; add "nth" to pick one` };
   }
 
-  return typeof nth === 'number' ? base.nth(nth) : base;
+  return { locator: typeof nth === 'number' ? base.nth(nth) : base };
 }
 
 /**
@@ -261,10 +269,10 @@ export async function resolveLocatorOrFirst(
   candidates: LocatorCandidate[],
 ): Promise<ResolvedLocator> {
   for (const [index, candidate] of candidates.entries()) {
-    let match: Locator | null = null;
+    let outcome: { locator: Locator } | { reason: string };
 
     try {
-      match = await matchCandidate(page, candidate);
+      outcome = await matchCandidate(page, candidate);
     } catch {
       // Same reasoning as resolveLocator: a throwing rung is a rung that
       // did not match, not a reason to abandon the ones after it. There
@@ -273,8 +281,8 @@ export async function resolveLocatorOrFirst(
       continue;
     }
 
-    if (match !== null) {
-      return { locator: match, index, remainingMs: 0 };
+    if (!('reason' in outcome)) {
+      return { locator: outcome.locator, index, remainingMs: 0 };
     }
   }
 
