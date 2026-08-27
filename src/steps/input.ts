@@ -443,3 +443,70 @@ export const setInputFiles: StepExecutor = {
     };
   },
 };
+
+/**
+ * Fill a multi-part composer, adding each new part as it goes.
+ *
+ * A thread cannot be expressed as a static step list, because the number
+ * of parts is an input and the scenario engine has no loop. It also
+ * cannot be faked with `try_branch`: that catches a
+ * ScenarioStepFailedException and cannot tell "there is no part 4" from
+ * "the add button broke", so a five-part thread would quietly post as
+ * two and report success. The whole reason for composing a thread in one
+ * pass rather than as a reply chain is that it is all-or-nothing, and
+ * swallowing a real failure gives that away.
+ *
+ * The ORDER here is measured, not assumed. On X the add control is only
+ * present while the last part has content: it disappears the moment a
+ * new empty part is created and returns once that part is typed into.
+ * So each iteration types first and adds second, never two adds in a
+ * row. Getting this backwards produces a recipe that works for two
+ * parts and hangs on three.
+ *
+ * `editorTemplate` keeps the site's naming in the recipe where it can be
+ * repaired without a release, while the loop lives here where it has to.
+ * `{index}` is substituted per part (X names them tweetTextarea_0,
+ * tweetTextarea_1, ...).
+ *
+ * Nothing is submitted. The recipe still owns the click that publishes,
+ * so a caller can inspect or abandon a composed thread.
+ */
+export const composeThread: StepExecutor = {
+  name: 'composeThread',
+  description:
+    'Type each part of a multi-part composer, clicking the add control between parts. Does not submit.',
+  schema: z
+    .object({
+      editorTemplate: z.string().min(1),
+      addButton: LocatorSpec,
+      parts: z.array(z.string().min(1)).min(1).max(25),
+      timeout: TimeoutMs.default(20_000),
+    })
+    .strict(),
+  async execute(ctx, config) {
+    const c = config as {
+      editorTemplate: string;
+      addButton: Candidates;
+      parts: string[];
+      timeout: number;
+    };
+
+    for (const [index, part] of c.parts.entries()) {
+      if (index > 0) {
+        const add = await resolveLocator(ctx.page, c.addButton, c.timeout);
+        await add.locator.click({ timeout: add.remainingMs });
+      }
+
+      const selector = c.editorTemplate.replaceAll('{index}', String(index));
+      const editor = await resolveLocator(ctx.page, [{ selector, nth: 0 }], c.timeout);
+
+      // Clicked rather than focused, for the same reason insertText
+      // clicks: a rich editor keys its edit mode off a real
+      // click-sourced focus event and stays inert otherwise.
+      await editor.locator.click({ timeout: editor.remainingMs });
+      await ctx.page.keyboard.insertText(part);
+    }
+
+    return { ok: true, output: { parts: c.parts.length } };
+  },
+};

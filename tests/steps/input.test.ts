@@ -8,6 +8,7 @@ import {
   fill,
   focus,
   hover,
+  composeThread,
   insertText,
   press,
   scrollIntoViewIfNeeded,
@@ -221,5 +222,78 @@ describe('input primitives (Playwright shape)', () => {
     expect((args![0] as { name: string }).name).toBe('demo.txt');
     expect(result.ok).toBe(true);
     expect((result.output as { bytes: number }).bytes).toBe(5);
+  });
+
+  it('composeThread types each part and adds between them, never two adds running', async () => {
+    // Measured on the live page: the add control is only present while
+    // the last part has content. It disappears the moment a new empty
+    // part is created and returns once that part is typed into, so an
+    // implementation that clicked add twice would work for two parts and
+    // hang on three.
+    const order: string[] = [];
+    const editor = makeLocator({ click: vi.fn(async () => { order.push('click-editor'); }) as never });
+    (editor as unknown as { nth: unknown }).nth = vi.fn(() => editor);
+    const add = makeLocator({ click: vi.fn(async () => { order.push('click-add'); }) as never });
+    (add as unknown as { nth: unknown }).nth = vi.fn(() => add);
+
+    const page = makePage({
+      locator: vi.fn((selector: string) =>
+        selector.includes('addButton') ? add : editor) as never,
+    });
+    page.keyboard.insertText = vi.fn(async (text: string) => { order.push(`type:${text}`); }) as never;
+
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(composeThread, ctx, {
+      editorTemplate: '[data-testid="tweetTextarea_{index}"]',
+      addButton: { selector: '[data-testid="addButton"]' },
+      parts: ['one', 'two', 'three'],
+      timeout: 5_000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(order).toEqual([
+      'click-editor', 'type:one',
+      'click-add', 'click-editor', 'type:two',
+      'click-add', 'click-editor', 'type:three',
+    ]);
+  });
+
+  it('composeThread numbers each editor from the template', async () => {
+    const seen: string[] = [];
+    const locator = makeLocator();
+    (locator as unknown as { nth: unknown }).nth = vi.fn(() => locator);
+    const page = makePage({
+      locator: vi.fn((selector: string) => { seen.push(selector); return locator; }) as never,
+    });
+    const { ctx } = makeCtx({ page });
+
+    await runStep(composeThread, ctx, {
+      editorTemplate: '[data-testid="tweetTextarea_{index}"]',
+      addButton: { selector: '[data-testid="addButton"]' },
+      parts: ['a', 'b'],
+      timeout: 5_000,
+    });
+
+    expect(seen).toContain('[data-testid="tweetTextarea_0"]');
+    expect(seen).toContain('[data-testid="tweetTextarea_1"]');
+  });
+
+  it('composeThread submits nothing', async () => {
+    // The recipe owns the click that publishes, so a composed thread can
+    // still be inspected or abandoned.
+    const locator = makeLocator();
+    (locator as unknown as { nth: unknown }).nth = vi.fn(() => locator);
+    const page = makePage({ locator: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
+
+    await runStep(composeThread, ctx, {
+      editorTemplate: '[data-testid="tweetTextarea_{index}"]',
+      addButton: { selector: '[data-testid="addButton"]' },
+      parts: ['only'],
+      timeout: 5_000,
+    });
+
+    expect(page.keyboard.press).not.toHaveBeenCalled();
   });
 });

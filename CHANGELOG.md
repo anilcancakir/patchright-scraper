@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## v0.6.0 (2026-08-28)
+
+**`composeThread`**: type each part of a multi-part composer, clicking
+the add control between parts. Does not submit; the recipe still owns
+the click that publishes.
+
+A thread cannot be expressed as a static step list, because the number
+of parts is an input and the scenario engine has no loop. It also cannot
+be faked with `try_branch`: that catches one exception type and cannot
+tell "there is no part 4" from "the add button broke", so a five-part
+thread would quietly post as two and report success. The entire reason
+to compose a thread in one pass rather than as a reply chain is that it
+is all-or-nothing, and swallowing a real failure gives that away.
+
+The ordering is measured rather than assumed. On X the add control is
+only present while the last part has content: it disappears the moment a
+new empty part is created and returns once that part is typed into. So
+each iteration types first and adds second, never two adds running. An
+implementation that got this backwards would work for two parts and hang
+on three.
+
+`editorTemplate` keeps the site's naming in the recipe, where it can be
+repaired without a release, while the loop lives in the step, where it
+has to. `{index}` is substituted per part.
+
 ## v0.5.1 (2026-08-26)
 
 A locator chain now says WHICH problem each candidate had. "Matched
