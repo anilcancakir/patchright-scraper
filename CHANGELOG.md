@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## v0.6.1 (2026-08-28)
+
+Clear Chrome's single-instance guards before opening a persistent
+profile.
+
+`SingletonLock`, `SingletonCookie` and `SingletonSocket` name the
+process that last held the profile. When that process is killed rather
+than shut down — the container stopped, an OOM, a host reboot — the
+files survive, and the next Chrome to open the profile tries to hand off
+to an instance that is gone and waits forever.
+
+The symptom is the worst kind. `POST /v1/sessions` never answers at all,
+so the caller sees a client-side timeout that names nothing, while
+`/v1/health` keeps returning 200 and the container reads healthy. Found
+after recycling a long-lived dedicated container: every fresh container
+that mounted that profile hung, on the previous image and the new one
+alike, which is what ruled the image out.
+
+Nothing in this system shuts Chrome down politely, so this is what makes
+the container stop path survivable at all. Safe unconditionally: Chrome
+recreates all three on launch, and cookies, Local State and the profile
+directories are untouched.
+
 ## v0.6.0 (2026-08-28)
 
 **`composeThread`**: type each part of a multi-part composer, clicking

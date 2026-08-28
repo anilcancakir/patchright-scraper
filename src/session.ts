@@ -1,9 +1,37 @@
 import { chromium, type BrowserContext, type Page } from 'patchright';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SessionCreate } from './types.js';
 import type { SessionState } from './steps/types.js';
+
+/**
+ * Drop Chrome's single-instance guards before opening a profile.
+ *
+ * `SingletonLock`, `SingletonCookie` and `SingletonSocket` name the
+ * process that last held the profile. When that process was killed
+ * rather than shut down (container stopped, OOM, host rebooted), the
+ * files survive, and the next Chrome to open the profile tries to hand
+ * off to an instance that is gone and waits. The symptom is the worst
+ * kind: `POST /v1/sessions` never answers at all, so the caller sees a
+ * client-side timeout that names nothing, while /v1/health keeps
+ * returning 200 and the container reads healthy.
+ *
+ * Found on 2026-08-28 after recycling a long-lived dedicated container:
+ * every fresh container that mounted that profile hung, on the old
+ * image and the new one alike, which is what ruled the image out.
+ *
+ * Safe to delete unconditionally. Chrome recreates all three on launch,
+ * and nothing that constitutes a login lives in them: cookies, Local
+ * State and the profile directories are untouched. Removing them is
+ * also what makes the container stop path survivable, since nothing in
+ * this system shuts Chrome down politely.
+ */
+export function clearSingletonGuards(profilePath: string): void {
+  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+    rmSync(join(profilePath, name), { force: true });
+  }
+}
 
 /**
  * Seed chrome's user-data-dir Preferences JSON before the persistent
@@ -204,6 +232,7 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
   const subdir = input.identityHash ?? id;
   const profilePath = join(PROFILE_ROOT, subdir);
   mkdirSync(profilePath, { recursive: true });
+  clearSingletonGuards(profilePath);
   seedChromePreferences(profilePath);
 
   // Only stamped when something is listening for it. The header exists
