@@ -1,6 +1,7 @@
 import { mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Page } from 'patchright';
 import { z } from 'zod';
 import { LocatorSpec, type LocatorCandidate, resolveLocator } from './locator.js';
 import type { StepExecutor } from './types.js';
@@ -56,6 +57,94 @@ export function sampleKeystrokeGap(mean: number): number {
   return Math.round(mean - spread + Math.random() * spread * 2);
 }
 
+/**
+ * Default number of interpolated points a pointer draws on its way to a
+ * `click`, `dblclick` or `hover` target, replacing Playwright's own
+ * default of a single teleport point: `move(x, y, { steps = 1 })` in
+ * playwright-core `input.ts:216-290` interpolates exactly one point when
+ * `steps` is omitted, so what ships without this is one instantaneous
+ * `mousemove` at the destination rather than a path.
+ *
+ * Sized off Plesner et al. (COMPSAC 2024, arXiv:2409.08831), live against
+ * reCAPTCHAv2: no movement averaged 19.23 challenges to pass, straight-line
+ * movement ~7, Bezier movement 8.38 (t = 0.58, p = 0.57 against
+ * straight-line: not significant). Movement is what matters and curve
+ * shape is not measurably better, which is also why this stays a straight
+ * line rather than a Bezier: BeCAPTCHA-Mouse (arXiv:2005.00890) and DMTG
+ * (arXiv:2410.18233) both classify Bezier-family synthetic trajectories as
+ * non-human at 88 to 99.9 per cent, so a curve generator would be trading
+ * an unmeasured benefit for a measured tell.
+ */
+export const DEFAULT_POINTER_STEPS = 12;
+
+const PointerSteps = z.number().int().positive().default(DEFAULT_POINTER_STEPS);
+
+/**
+ * Largest pixel drift of the settle hop away from the target centre.
+ * Small on purpose: this is the last-moment correction of a hand that has
+ * already arrived, not a second approach.
+ */
+const SETTLE_DRIFT_PX = 3;
+
+/**
+ * Signed 1 to {@link SETTLE_DRIFT_PX} pixel offset for the settle hop.
+ * Randomised because a settle that lands on the same two pixels of every
+ * click across every session is itself a constant worth matching on.
+ */
+function settleOffset(): number {
+  const magnitude = 1 + Math.floor(Math.random() * SETTLE_DRIFT_PX);
+
+  return Math.random() < 0.5 ? -magnitude : magnitude;
+}
+
+/**
+ * Approach the target's centre along an interpolated path, then settle on
+ * it, so the browser emits a sequence of `mousemove` events instead of one
+ * teleport before the action that follows.
+ *
+ * The approach delegates to Playwright's own `steps` interpolation rather
+ * than hand-rolling the hops, and that choice is load-bearing: `move()`
+ * interpolates from the pointer's LAST position, so the path crosses the
+ * viewport from wherever the previous action left it. Hand-rolling the
+ * loop can only start from a point this function already knows, which
+ * means a path that begins inside the target element and travels a few
+ * dozen pixels: more `mousemove` events than before, but a shape no hand
+ * produces. See {@link DEFAULT_POINTER_STEPS} for why the line is straight
+ * rather than curved.
+ *
+ * The two settle hops go beyond the "interpolate the existing move and
+ * nothing more" bound this change was originally scoped to, by operator
+ * decision on 2026-09-03: a pointer that arrives at a centre pixel and
+ * then holds perfectly still until mousedown is as distinctive as one that
+ * teleported there.
+ *
+ * No independent timeout: every hop is a fire-and-forget CDP dispatch, the
+ * same primitive Playwright's own `move()` uses, so there is nothing here
+ * to bound against the step's `remainingMs` budget.
+ *
+ * A `null` box means a detached or not-yet-rendered element. The move is
+ * skipped rather than thrown: the locator action that follows has its own
+ * wait/retry against `remainingMs` and may still land once the DOM
+ * settles, and refusing a click that would otherwise have worked is worse
+ * than falling back to Playwright's own implicit single-point move.
+ */
+async function movePointerToBoxCentre(
+  page: Page,
+  box: { x: number; y: number; width: number; height: number } | null,
+  steps: number,
+): Promise<void> {
+  if (box === null) {
+    return;
+  }
+
+  const centreX = box.x + box.width / 2;
+  const centreY = box.y + box.height / 2;
+
+  await page.mouse.move(centreX, centreY, { steps });
+  await page.mouse.move(centreX + settleOffset(), centreY + settleOffset());
+  await page.mouse.move(centreX, centreY);
+}
+
 export const click: StepExecutor = {
   name: 'click',
   description: 'Click an element matched by a locator.',
@@ -66,6 +155,7 @@ export const click: StepExecutor = {
       clickCount: z.number().int().positive().default(1),
       delay: z.number().int().nonnegative().default(0),
       force: z.boolean().default(false),
+      pointerSteps: PointerSteps,
       timeout: TimeoutMs.default(10_000),
     })
     .strict(),
@@ -76,9 +166,12 @@ export const click: StepExecutor = {
       clickCount: number;
       delay: number;
       force: boolean;
+      pointerSteps: number;
       timeout: number;
     };
     const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    const box = await target.locator.boundingBox({ timeout: target.remainingMs });
+    await movePointerToBoxCentre(ctx.page, box, c.pointerSteps);
     await target.locator.click({
       button: c.button,
       clickCount: c.clickCount,
@@ -100,6 +193,7 @@ export const dblclick: StepExecutor = {
       button: z.enum(['left', 'right', 'middle']).default('left'),
       delay: z.number().int().nonnegative().default(0),
       force: z.boolean().default(false),
+      pointerSteps: PointerSteps,
       timeout: TimeoutMs.default(10_000),
     })
     .strict(),
@@ -109,9 +203,12 @@ export const dblclick: StepExecutor = {
       button: 'left' | 'right' | 'middle';
       delay: number;
       force: boolean;
+      pointerSteps: number;
       timeout: number;
     };
     const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    const box = await target.locator.boundingBox({ timeout: target.remainingMs });
+    await movePointerToBoxCentre(ctx.page, box, c.pointerSteps);
     await target.locator.dblclick({
       button: c.button,
       delay: c.delay,
@@ -310,12 +407,20 @@ export const hover: StepExecutor = {
     .object({
       locator: LocatorSpec,
       force: z.boolean().default(false),
+      pointerSteps: PointerSteps,
       timeout: TimeoutMs.default(10_000),
     })
     .strict(),
   async execute(ctx, config) {
-    const c = config as { locator: Candidates; force: boolean; timeout: number };
+    const c = config as {
+      locator: Candidates;
+      force: boolean;
+      pointerSteps: number;
+      timeout: number;
+    };
     const target = await resolveLocator(ctx.page, c.locator, c.timeout);
+    const box = await target.locator.boundingBox({ timeout: target.remainingMs });
+    await movePointerToBoxCentre(ctx.page, box, c.pointerSteps);
     await target.locator.hover({ force: c.force, timeout: target.remainingMs });
 
     return { ok: true, output: { hovered: true, locatorIndex: target.index } };

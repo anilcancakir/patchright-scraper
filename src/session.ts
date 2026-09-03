@@ -2,6 +2,7 @@ import { chromium, type BrowserContext, type Page } from 'patchright';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveLaunchArgs } from './browser/launch-args.js';
 import type { SessionCreate } from './types.js';
 import type { SessionState } from './steps/types.js';
 
@@ -115,6 +116,41 @@ const SCRAPING_DISABLE_FEATURES = [
   'OptimizationHints',
   'Translate',
 ].join(',');
+
+/**
+ * Chrome flags for the launch, sized to the resolved viewport.
+ *
+ * `--test-type` is the one that pays: chromium's
+ * `chrome/browser/ui/startup/infobar_utils.cc:221-227` returns on it
+ * before reaching `ShowBadFlagsPrompt()`, so the bad-flag warning bar
+ * never opens. Measured 2026-09-03 inside the live prod container,
+ * reading `outerHeight - innerHeight` off the X window title with no
+ * CDP involved: 143 without it, **87** with it, so the bar was taking
+ * 56 px out of every page's viewport. The infobar-disabling switch
+ * patchright already passes (with its own comment admitting chrome
+ * ignores it, having dropped it from the switch table) is deliberately
+ * not repeated here: the same run measured 143 with it. That one is
+ * pinned by name in tests/session/launch-identity.test.ts.
+ *
+ * `--window-size` and `--window-position` close the other half of the
+ * geometry giveaway. Patchright sets neither, which is why the same run
+ * found a 945-wide window sitting at 10,10 on a 1920x1080 screen; both
+ * were confirmed settable (`--window-size=1280,900` produced outerWidth
+ * 1280, `--window-position=0,0` produced screenX/Y 0,0).
+ */
+function resolveChromeArgs(viewport: { width: number; height: number }): string[] {
+  return [
+    // Strip chrome's password manager / autofill / translate /
+    // optimization-hints surfaces. Scraping never wants the bubbles,
+    // the leak ping, or the heuristics ping; the Preferences seed
+    // above silences the bubbles, this flag closes the network
+    // surface.
+    `--disable-features=${SCRAPING_DISABLE_FEATURES}`,
+    '--test-type',
+    `--window-size=${viewport.width},${viewport.height}`,
+    '--window-position=0,0',
+  ];
+}
 
 interface ManagedSession {
   id: string;
@@ -244,13 +280,46 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
     ? { 'X-Kodizm-Session': id }
     : {};
 
+  // The container's own identity, as the provisioner set it. Four
+  // fields are consumed and the rest deliberately ignored: the
+  // resolver's `EXTRA_LAUNCH_ARGS_JSON` list would open an
+  // operator-settable arbitrary chrome flag channel, which is a
+  // fingerprint and security surface nothing here needs, and
+  // `headless` / `proxy` are already decided per session.
+  const containerIdentity = resolveLaunchArgs();
+
+  // Per-session first, container env second, on every field. Get the
+  // order backwards and a caller that names a zone to match its exit
+  // address is silently overruled by the box it happens to run on.
+  const resolvedViewport = input.viewport ?? containerIdentity.viewport;
+
+  // The resolver floors `locale` at 'en-US', and that floor must not
+  // reach chrome: an unset session locale passes nothing today, and
+  // forcing a locale where none was asked for is a behaviour change
+  // beyond this wiring. So the env has to actually say something.
+  const containerLocale = process.env.LOCALE ? containerIdentity.locale : undefined;
+
   const context = await withLaunchLock(() =>
     chromium.launchPersistentContext(profilePath, {
       channel: 'chrome',
       headless: process.env.DISPLAY ? false : true,
       proxy: input.proxy,
-      userAgent: input.userAgent,
-      locale: input.locale,
+      userAgent: input.userAgent ?? containerIdentity.userAgent,
+      locale: input.locale ?? containerLocale,
+      // The whole point of the wiring: a browser leaving from a proxy
+      // in Istanbul used to declare the host clock, because nothing
+      // read the TIMEZONE the provisioner hands every container.
+      timezoneId: input.timezoneId ?? containerIdentity.timezoneId,
+      // Emulate a viewport only when the session asks for one. A
+      // patchright viewport is CDP metrics emulation, and for a headful
+      // persistent context patchright also resizes the window to the
+      // viewport plus hardcoded Linux insets (8 x 131, patchright-core
+      // crPage.js:836-849). `VIEWPORT` doubles as the Xvfb screen
+      // geometry (entrypoint.sh:18), so emulating the container default
+      // would ask for a 1928x1211 window on a 1920x1080 screen and make
+      // `outerHeight - innerHeight` read 131, throwing away the 87 the
+      // --window-size path measures. The container default reaches
+      // chrome as --window-size instead.
       viewport: input.viewport ?? null,
       extraHTTPHeaders: extraHeaders,
       // Pool mode routes chrome through the in-container mitm sidecar
@@ -258,14 +327,7 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
       // signs intercepted responses with its own CA, so the browser
       // must accept the cert chain when the caller flags it.
       ignoreHTTPSErrors: input.ignoreHTTPSErrors ?? false,
-      // Strip chrome's password manager / autofill / translate /
-      // optimization-hints surfaces. Scraping never wants the
-      // bubbles, the leak ping, or the heuristics ping; the
-      // Preferences seed above silences the bubbles, this flag
-      // closes the network surface.
-      args: [
-        `--disable-features=${SCRAPING_DISABLE_FEATURES}`,
-      ],
+      args: resolveChromeArgs(resolvedViewport),
     }),
   );
 

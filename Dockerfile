@@ -43,6 +43,36 @@ RUN apt-get update \
     && pip3 install --no-cache-dir mitmproxy==11.0.0 requests==2.32.3 \
     && rm -rf /var/lib/apt/lists/*
 
+# `install-deps` (base image) only installs what Chromium needs to render:
+# fonts-noto-color-emoji, fonts-unifont, xfonts-cyrillic, xfonts-scalable,
+# fonts-liberation, fonts-ipafont-gothic, fonts-wqy-zenhei, fonts-tlwg-loma-otf,
+# fonts-freefont-ttf. That set metric-aliases fonts-liberation to Arial,
+# Helvetica, Times New Roman and Courier New, which is exactly the 5-of-20
+# families a font-width probe measured on 2026-09-03 (see
+# .ac/plans/scraper-detectability-hardening/evidence/probe-baseline.md).
+#
+# Bounded to the four packages below, matching stock Ubuntu Desktop
+# (DejaVu + Noto core + Liberation + mscorefonts) rather than an exhaustive
+# list. Fifield and Egelman, "Fingerprinting Web Users Through Font Metrics",
+# FC 2015 (https://fc15.ifca.ai/preproceedings/paper_83.pdf), measure font
+# enumeration alone at 10 to 15 bits of entropy: installing every available
+# font moves this image into a smaller, rarer equivalence class, which is
+# worse than matching one populous distro profile. Do not add more.
+#
+# ttf-mscorefonts-installer prompts interactively for its EULA; the
+# debconf-set-selections line below preseeds acceptance so the build does not
+# hang waiting on stdin. It pulls its .cab payloads from a third-party
+# SourceForge mirror at build time, so a failure on this package specifically
+# is a network fault, not a Dockerfile error.
+RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        fonts-dejavu-core \
+        fonts-noto-core \
+        fonts-croscore \
+        ttf-mscorefonts-installer \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY package.json ./

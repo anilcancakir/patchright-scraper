@@ -34,6 +34,15 @@ export const SessionCreateSchema = z.object({
   proxy: ProxySchema.optional(),
   userAgent: z.string().optional(),
   locale: z.string().optional(),
+  /**
+   * IANA zone the browser should declare, e.g. `Europe/Istanbul`.
+   *
+   * Optional on purpose: when the caller names none, the container's
+   * own `TIMEZONE` env decides, and the schema is non-strict, so a
+   * caller that sends this key to an image predating it is ignored
+   * rather than rejected.
+   */
+  timezoneId: z.string().optional(),
   viewport: z
     .object({ width: z.number().int(), height: z.number().int() })
     .optional(),

@@ -38,6 +38,7 @@ export interface MockLocator {
   hover: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
   blur: ReturnType<typeof vi.fn>;
+  boundingBox: ReturnType<typeof vi.fn>;
   dragTo: ReturnType<typeof vi.fn>;
   scrollIntoViewIfNeeded: ReturnType<typeof vi.fn>;
   selectOption: ReturnType<typeof vi.fn>;
@@ -68,6 +69,7 @@ export function makeLocator(overrides: Partial<MockLocator> = {}): MockLocator {
     hover: vi.fn(async () => undefined),
     focus: vi.fn(async () => undefined),
     blur: vi.fn(async () => undefined),
+    boundingBox: vi.fn(async () => ({ x: 0, y: 0, width: 100, height: 40 })),
     dragTo: vi.fn(async () => undefined),
     scrollIntoViewIfNeeded: vi.fn(async () => undefined),
     selectOption: vi.fn(async () => ['ok']),
@@ -103,6 +105,9 @@ export interface MockPage {
     press: ReturnType<typeof vi.fn>;
     insertText: ReturnType<typeof vi.fn>;
     type: ReturnType<typeof vi.fn>;
+  };
+  mouse: {
+    move: ReturnType<typeof vi.fn>;
   };
   screenshot: ReturnType<typeof vi.fn>;
   content: ReturnType<typeof vi.fn>;
@@ -145,6 +150,9 @@ export function makePage(overrides: Partial<MockPage> = {}): MockPage {
       press: vi.fn(async () => undefined),
       insertText: vi.fn(async () => undefined),
       type: vi.fn(async () => undefined),
+    },
+    mouse: {
+      move: vi.fn(async () => undefined),
     },
     screenshot: vi.fn(async () => Buffer.from('IMG')),
     content: vi.fn(async () => '<html></html>'),
