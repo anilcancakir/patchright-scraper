@@ -47,9 +47,10 @@ RUN apt-get update \
 # fonts-noto-color-emoji, fonts-unifont, xfonts-cyrillic, xfonts-scalable,
 # fonts-liberation, fonts-ipafont-gothic, fonts-wqy-zenhei, fonts-tlwg-loma-otf,
 # fonts-freefont-ttf. That set metric-aliases fonts-liberation to Arial,
-# Helvetica, Times New Roman and Courier New, which is exactly the 5-of-20
-# families a font-width probe measured on 2026-09-03 (see
-# .ac/plans/scraper-detectability-hardening/evidence/probe-baseline.md).
+# Helvetica, Times New Roman and Courier New, which is exactly the five
+# families out of twenty that a font-width probe detected in this image on
+# 2026-09-03. A stock Ubuntu Desktop reports far more, and reporting five
+# is itself the signal.
 #
 # Bounded to the four packages below, matching stock Ubuntu Desktop
 # (DejaVu + Noto core + Liberation + mscorefonts) rather than an exhaustive

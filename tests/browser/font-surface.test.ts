@@ -16,10 +16,9 @@ const FONT_PACKAGES = [
   'ttf-mscorefonts-installer',
 ] as const;
 
-// Reachable families (12 of the probe's 20), sourced verbatim from
-// `.ac/plans/scraper-detectability-hardening/evidence/probe-baseline.md`.
-// Helvetica and Liberation Sans come from `fonts-liberation`, which the base
-// Playwright image installs via `install-deps`, not from a line in this Dockerfile.
+// Reachable families: 12 of the 20 a font-width probe checks. Helvetica and
+// Liberation Sans come from `fonts-liberation`, which the base Playwright
+// image installs via `install-deps`, not from a line in this Dockerfile.
 const REACHABLE_FAMILIES = [
   'Arial',
   'Times New Roman',
