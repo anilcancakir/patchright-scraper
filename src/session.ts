@@ -170,6 +170,26 @@ const sessions = new Map<string, ManagedSession>();
 const PROFILE_ROOT = process.env.PROFILE_ROOT ?? process.env.PROFILE_DIR ?? '/data/profiles';
 const SESSION_BEARERS_PATH = process.env.SESSION_BEARERS_PATH ?? '/data/session-bearers.json';
 const CHROME_IDLE_MS = Number(process.env.CHROME_IDLE_MS ?? process.env.SESSION_IDLE_MS ?? 60 * 60 * 1000);
+
+/**
+ * Does this container carry the Chrome sandbox grant?
+ *
+ * `--no-sandbox` is not passed by anything in this source; it is
+ * playwright's `launchPersistentContext` default
+ * (`chromiumSandbox: false`), and it sits in chromium's `kBadFlags[]`.
+ * Running chrome under its own sandbox needs the container to have
+ * been created with a seccomp profile that allows an unprivileged
+ * namespace-creating `clone`, which the provisioner grants together
+ * with this env key, in the same launch spec.
+ *
+ * Reading the key rather than asking unconditionally is the backward
+ * compatibility guarantee: the provisioner only invalidates a stopped
+ * container on an image-digest change, so every container created
+ * before the grant existed keeps its old HostConfig, and a sandboxed
+ * chrome would simply fail to start inside it. Compared against '1'
+ * exactly, because env values are strings and '0' is truthy here.
+ */
+const CHROME_SANDBOX_GRANTED = process.env.CHROME_SANDBOX === '1';
 const VNC_IDLE_MS = Number(process.env.VNC_IDLE_MS ?? 15 * 60 * 1000);
 
 /**
@@ -328,6 +348,11 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
       // must accept the cert chain when the caller flags it.
       ignoreHTTPSErrors: input.ignoreHTTPSErrors ?? false,
       args: resolveChromeArgs(resolvedViewport),
+      // Spread rather than `chromiumSandbox: CHROME_SANDBOX_GRANTED`:
+      // an ungranted container must leave the option unset so
+      // playwright's own default stays in charge, exactly as it is for
+      // every container running today.
+      ...(CHROME_SANDBOX_GRANTED ? { chromiumSandbox: true } : {}),
     }),
   );
 
