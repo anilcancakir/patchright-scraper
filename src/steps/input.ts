@@ -25,36 +25,58 @@ type Candidates = LocatorCandidate[];
  * constant across 180 trials, found no separation, and left timing as
  * the untested variable.
  *
+ * v0.6.2 shipped this at 100, roughly half the measured population rate:
+ * Dhakal et al. (CHI 2018, 136M keystrokes, 168k participants) found a
+ * mean inter-key interval of 238.66ms (51.56 WPM). 240 rounds that to a
+ * value the projection guard below divides evenly against.
+ *
  * A recipe that genuinely wants the old behaviour writes `delay: 0`,
  * which is treated as an explicit opt-out rather than as a tiny gap.
  */
-export const KEYSTROKE_MEAN_MS = 100;
+export const KEYSTROKE_MEAN_MS = 240;
 
 /**
- * How far a sampled gap may stray from the mean, as a fraction of it.
+ * Log-normal shape parameter (sigma of the underlying normal) for
+ * {@link sampleKeystrokeGap}.
  *
- * The gap is sampled rather than fixed because a constant interval is
- * its own signal: nobody types at exactly 100ms. 0.4 puts a 100ms mean
- * in a 60 to 140ms band, which is inside the spread of ordinary human
- * typing rather than an attempt to model one person's rhythm.
+ * Gonzalez et al. (PMC8606350) tested 14 candidate distributions against
+ * three public keystroke datasets: Gaussian is "rejected very often",
+ * log-logistic wins most often and log-normal is a close second. Neither
+ * paper hands over a fitted sigma, so 0.6 is an engineering choice sized
+ * for this sampler's own test suite: large enough that 1000 draws
+ * reliably produce a value past 2x the mean (the heavy tail a clamped
+ * uniform band cannot produce at all), small enough that the sample mean
+ * still converges tightly on the configured mean.
  */
-const KEYSTROKE_JITTER = 0.4;
+const KEYSTROKE_LOGNORMAL_SIGMA = 0.6;
 
 /**
- * One inter-keystroke gap, in milliseconds.
+ * One inter-keystroke gap, in milliseconds, drawn from a log-normal
+ * distribution parameterised so its mean equals `mean`.
  *
- * Exported for its own test: the property that matters (a band, and not
- * a constant) is worth pinning directly rather than inferring from
- * wall-clock timings inside a step test.
+ * Exported for its own test: the shape that matters (heavy-tailed and
+ * right-skewed, not a clamped band) is worth pinning directly rather
+ * than inferring from wall-clock timings inside a step test.
+ *
+ * Box-Muller turns two uniform draws into one standard normal, which is
+ * then exponentiated. `mu` is solved from the log-normal mean identity
+ * `E[X] = exp(mu + sigma^2 / 2)` so the distribution's mean lands on the
+ * caller's `mean` argument rather than on `mean` shifted by the shape
+ * parameter.
  */
 export function sampleKeystrokeGap(mean: number): number {
   if (mean <= 0) {
     return 0;
   }
 
-  const spread = mean * KEYSTROKE_JITTER;
+  // u1 excludes 0 (Math.random() can return it) so log(u1) stays finite.
+  const u1 = 1 - Math.random();
+  const u2 = Math.random();
+  const standardNormal = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 
-  return Math.round(mean - spread + Math.random() * spread * 2);
+  const mu = Math.log(mean) - (KEYSTROKE_LOGNORMAL_SIGMA ** 2) / 2;
+
+  return Math.round(Math.exp(mu + KEYSTROKE_LOGNORMAL_SIGMA * standardNormal));
 }
 
 /**
