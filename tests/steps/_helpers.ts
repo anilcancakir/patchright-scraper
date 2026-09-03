@@ -33,6 +33,7 @@ export interface MockLocator {
   dblclick: ReturnType<typeof vi.fn>;
   fill: ReturnType<typeof vi.fn>;
   type: ReturnType<typeof vi.fn>;
+  pressSequentially: ReturnType<typeof vi.fn>;
   press: ReturnType<typeof vi.fn>;
   hover: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
@@ -62,6 +63,7 @@ export function makeLocator(overrides: Partial<MockLocator> = {}): MockLocator {
     dblclick: vi.fn(async () => undefined),
     fill: vi.fn(async () => undefined),
     type: vi.fn(async () => undefined),
+    pressSequentially: vi.fn(async () => undefined),
     press: vi.fn(async () => undefined),
     hover: vi.fn(async () => undefined),
     focus: vi.fn(async () => undefined),
@@ -100,6 +102,7 @@ export interface MockPage {
   keyboard: {
     press: ReturnType<typeof vi.fn>;
     insertText: ReturnType<typeof vi.fn>;
+    type: ReturnType<typeof vi.fn>;
   };
   screenshot: ReturnType<typeof vi.fn>;
   content: ReturnType<typeof vi.fn>;
@@ -141,6 +144,7 @@ export function makePage(overrides: Partial<MockPage> = {}): MockPage {
     keyboard: {
       press: vi.fn(async () => undefined),
       insertText: vi.fn(async () => undefined),
+      type: vi.fn(async () => undefined),
     },
     screenshot: vi.fn(async () => Buffer.from('IMG')),
     content: vi.fn(async () => '<html></html>'),

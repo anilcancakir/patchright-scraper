@@ -155,6 +155,57 @@ const SWEEP_INTERVAL_MS = 100;
 const MIN_ACTION_BUDGET_MS = 1_000;
 
 /**
+ * Share of the step timeout reserved for the action, never spent on
+ * resolution.
+ *
+ * The floor above is not enough on its own, because it is a constant
+ * while the budget it guards is not. Resolution polls `count()`, and a
+ * page that keeps re-rendering makes a candidate ambiguous for seconds:
+ * `count()` returns 2 while the old list is still in the DOM, or throws
+ * "Execution context was destroyed" mid-navigation. Resolution therefore
+ * used to sweep the whole budget, match on a late sweep, and hand the
+ * click the 1s floor, which then failed as
+ * `locator.click: Timeout 1000ms exceeded` with the real cause already
+ * discarded. Measured on 2026-09-03: 16 of 90 clicks in a production A/B
+ * lost that way, 14 of them on one re-rendering SPA.
+ *
+ * The consequence that made it worth fixing rather than tuning: raising
+ * a recipe's `timeout` fed resolution alone. The same late match left the
+ * action exactly 1s whether the step allowed 4 seconds or 40, so the one
+ * lever an author had did nothing for the action.
+ *
+ * Reserving a share fixes both. Resolution stops at
+ * `timeout - reserve` and fails with the candidate reasons it collected,
+ * which names the actual problem; and what the action receives now scales
+ * with the declared timeout. The total still cannot exceed `timeout`,
+ * which is the property the single shared budget existed to protect.
+ */
+const ACTION_BUDGET_SHARE = 0.3;
+
+/**
+ * How early resolution must stop so the action has something left.
+ *
+ * Deliberately NOT the same number as the floor above, and the two must
+ * not be merged. The floor is what an action RECEIVES and is absolute:
+ * `tests/steps/locator.test.ts` pins it with a 1ms declared timeout,
+ * because an absurd timeout is an authoring slip and being generous there
+ * prevents a hang while being strict buys nothing. This is where
+ * resolution STOPS, and it has to stay inside the declared timeout or a
+ * short step would never get to sweep at all.
+ *
+ * Hence the half cap: below about 3.3s the share is smaller than the
+ * floor, and taking the floor out of resolution's window would leave a
+ * 600ms step no sweeps. Such a step resolves on its first pass or not at
+ * all, and its action still gets the floor.
+ */
+function resolutionReserveFor(timeout: number): number {
+  return Math.min(
+    Math.max(MIN_ACTION_BUDGET_MS, Math.round(timeout * ACTION_BUDGET_SHARE)),
+    Math.max(1, Math.floor(timeout / 2)),
+  );
+}
+
+/**
  * Resolve the first candidate that matches exactly one element.
  *
  * Resolution polls `count()` rather than attempting the action, and it
@@ -180,6 +231,11 @@ export async function resolveLocator(
 ): Promise<ResolvedLocator> {
   const startedAt = Date.now();
   const deadline = startedAt + timeout;
+
+  // Two deadlines, not one: resolution must stop early enough that the
+  // action still has a share of the same budget.
+  const reserve = resolutionReserveFor(timeout);
+  const resolveBy = deadline - reserve;
 
   const reasons: string[] = [];
 
@@ -209,12 +265,21 @@ export async function resolveLocator(
       return {
         locator: outcome.locator,
         index,
+        // The floor stays absolute. On a normal timeout the sweep stopped
+        // by `resolveBy`, so what is left already exceeds it and the share
+        // is what the action actually spends; the floor only binds when
+        // the declared timeout was smaller than it, or when a single
+        // count() overran the boundary on a hung page. Both are exactly
+        // the cases where handing an action a near-zero budget would turn
+        // a slow step into a held browser.
         remainingMs: Math.max(MIN_ACTION_BUDGET_MS, deadline - Date.now()),
       };
     }
 
-    if (Date.now() >= deadline) {
-      throw new LocatorUnresolvedError(candidates, timeout, reasons);
+    if (Date.now() >= resolveBy) {
+      // Reported against the window resolution actually had, not the
+      // step timeout, so the message is not off by the reserve.
+      throw new LocatorUnresolvedError(candidates, timeout - reserve, reasons);
     }
 
     await new Promise((resolve) => setTimeout(resolve, SWEEP_INTERVAL_MS));

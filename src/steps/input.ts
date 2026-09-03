@@ -14,6 +14,48 @@ const TimeoutMs = z.number().int().positive().max(120_000);
  */
 type Candidates = LocatorCandidate[];
 
+/**
+ * Default gap between keystrokes on the `type` step, in milliseconds.
+ *
+ * Was 0, which sent a 40-character field as 40 key events with no gap
+ * between them. That is a behavioural signal independent of how each
+ * event was dispatched, and it is the axis a 2026-09-03 CDP-versus-XTEST
+ * measurement explicitly could not rule out: that A/B held provenance
+ * constant across 180 trials, found no separation, and left timing as
+ * the untested variable.
+ *
+ * A recipe that genuinely wants the old behaviour writes `delay: 0`,
+ * which is treated as an explicit opt-out rather than as a tiny gap.
+ */
+export const KEYSTROKE_MEAN_MS = 100;
+
+/**
+ * How far a sampled gap may stray from the mean, as a fraction of it.
+ *
+ * The gap is sampled rather than fixed because a constant interval is
+ * its own signal: nobody types at exactly 100ms. 0.4 puts a 100ms mean
+ * in a 60 to 140ms band, which is inside the spread of ordinary human
+ * typing rather than an attempt to model one person's rhythm.
+ */
+const KEYSTROKE_JITTER = 0.4;
+
+/**
+ * One inter-keystroke gap, in milliseconds.
+ *
+ * Exported for its own test: the property that matters (a band, and not
+ * a constant) is worth pinning directly rather than inferring from
+ * wall-clock timings inside a step test.
+ */
+export function sampleKeystrokeGap(mean: number): number {
+  if (mean <= 0) {
+    return 0;
+  }
+
+  const spread = mean * KEYSTROKE_JITTER;
+
+  return Math.round(mean - spread + Math.random() * spread * 2);
+}
+
 export const click: StepExecutor = {
   name: 'click',
   description: 'Click an element matched by a locator.',
@@ -167,7 +209,7 @@ export const type: StepExecutor = {
     .object({
       locator: LocatorSpec,
       text: z.string(),
-      delay: z.number().int().nonnegative().default(0),
+      delay: z.number().int().nonnegative().default(KEYSTROKE_MEAN_MS),
       clear: z.boolean().default(false),
       timeout: TimeoutMs.default(10_000),
     })
@@ -190,7 +232,40 @@ export const type: StepExecutor = {
       await ctx.page.keyboard.press('Backspace');
     }
 
-    await target.locator.type(c.text, { delay: c.delay, timeout: target.remainingMs });
+    if (c.delay <= 0) {
+      // Explicit opt-out. One call, one burst, no gaps, and Playwright
+      // bounds the whole operation itself. pressSequentially rather than
+      // the deprecated type(): same key events, same options, still
+      // supported.
+      await target.locator.pressSequentially(c.text, { delay: 0, timeout: target.remainingMs });
+
+      return { ok: true, output: { length: c.text.length, locatorIndex: target.index } };
+    }
+
+    // Refuse up front rather than overrun. Playwright's own type() bounds
+    // itself against the timeout; a hand-rolled loop does not, so a long
+    // string at a human gap would hold the browser far past the declared
+    // timeout. Both levers are named because either one fixes it and the
+    // right choice depends on whether the text or the pace is the point.
+    const projectedMs = c.text.length * c.delay;
+
+    if (projectedMs > target.remainingMs) {
+      throw new Error(
+        `Typing ${c.text.length} characters at ~${c.delay}ms each needs about ${projectedMs}ms, ` +
+          `but only ${target.remainingMs}ms of the step budget is left. ` +
+          'Raise "timeout" or lower "delay" (0 types instantly).',
+      );
+    }
+
+    await target.locator.focus({ timeout: target.remainingMs });
+
+    // Per character, so the gap can be sampled between keys. keyboard.type
+    // sends the real keydown/keypress/keyup triple for one character;
+    // insertText would deliver the text with no key events at all.
+    for (const char of c.text) {
+      await ctx.page.keyboard.type(char);
+      await new Promise((resolve) => setTimeout(resolve, sampleKeystrokeGap(c.delay)));
+    }
 
     return { ok: true, output: { length: c.text.length, locatorIndex: target.index } };
   },

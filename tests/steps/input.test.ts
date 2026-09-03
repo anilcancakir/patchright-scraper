@@ -89,7 +89,10 @@ describe('input primitives (Playwright shape)', () => {
     expect(locator.fill).not.toHaveBeenCalled();
     expect(page.keyboard.press).toHaveBeenCalledWith('ControlOrMeta+a');
     expect(page.keyboard.press).toHaveBeenCalledWith('Backspace');
-    expect(locator.type).toHaveBeenCalledWith('hello', expect.objectContaining({ delay: 0 }));
+    expect(locator.pressSequentially).toHaveBeenCalledWith(
+      'hello',
+      expect.objectContaining({ delay: 0 }),
+    );
   });
 
   it('insertText commits through the keyboard and clicks the target first', async () => {
