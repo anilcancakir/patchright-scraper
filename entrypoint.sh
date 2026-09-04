@@ -34,8 +34,16 @@ start_xvfb() {
     # and the same failure it exists to prevent.
     rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 
+    # -noreset, or declare_work_area below silently accomplishes nothing.
+    # X resets when its last client disconnects, and a reset frees every
+    # resource including root window properties. The entrypoint's xprop
+    # is the ONLY client at that moment, so the work area it sets dies
+    # with its own connection: the log line reports success and the
+    # property is gone before chrome ever connects. Measured on the
+    # v0.6.5 pool container, which logged "work area 1920x1040" and then
+    # answered "_NET_WORKAREA: not found".
     log "starting Xvfb on :99 (${screen})"
-    Xvfb :99 -screen 0 "${screen}" -ac +extension RANDR -nolisten tcp &
+    Xvfb :99 -screen 0 "${screen}" -ac -noreset +extension RANDR -nolisten tcp &
     export DISPLAY=:99
     # Give Xvfb a moment to actually accept connections; cheap loop avoids
     # racing the browser launch.

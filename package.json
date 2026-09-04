@@ -1,6 +1,6 @@
 {
   "name": "@kodizm/patchright-scraper",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "Kodizm scraping platform: Patchright HTTP service for one-shot and session-based scraping.",
   "private": true,
   "type": "module",

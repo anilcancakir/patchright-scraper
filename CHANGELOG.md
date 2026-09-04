@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.6.6 (2026-09-04)
+
+Start Xvfb with `-noreset`, or the work area v0.6.4 added never
+survives to be read.
+
+X resets when its last client connection closes, and a reset frees
+every resource including root window properties. The entrypoint's
+`xprop` is the only client at that moment, so the `_NET_WORKAREA` it
+sets dies with its own connection, before chrome ever connects.
+
+The failure is silent in the worst way: `xprop` exits 0, the entrypoint
+logs "work area 1920x1040 of 1920x1080", and the property is already
+gone. Caught on the live v0.6.5 pool container, which logged exactly
+that and then answered `_NET_WORKAREA: not found`, while the identical
+command run by hand persisted because chrome was holding a connection.
+
 ## v0.6.5 (2026-09-04)
 
 Clear the previous life's X lock before starting Xvfb.
