@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## v0.6.5 (2026-09-04)
+
+Clear the previous life's X lock before starting Xvfb.
+
+`/tmp` is the container's writable layer rather than a volume, so
+`/tmp/.X99-lock` survives a stop/start. An unclean stop therefore left
+a lock no process owned, Xvfb refused the display with "Server is
+already active for display 99", the entrypoint's readiness loop exited
+1, and `restart: unless-stopped` looped that forever.
+
+The window opened in v0.6.3, which turned `ENABLE_XVFB` on for pool
+mode. Before that the pool container never started an X server and had
+no lock to leave behind. Hit in production on 2026-09-04: the pool
+container crash-looped ten times and the Complex tier was down until
+the file was removed by hand.
+
+The removal is unconditional. A container start means a fresh PID
+namespace, so nothing from the previous life can still hold the
+display and any lock found here is stale by definition. Same reasoning
+as `clearSingletonGuards()` for Chrome's profile locks, against the
+same class of failure.
+
 ## v0.6.4 (2026-09-04)
 
 Give the browser a work area and the keyboard a cadence on the two

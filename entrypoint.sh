@@ -16,6 +16,24 @@ start_xvfb() {
         return
     fi
     local screen="${VIEWPORT:-1920x1080}x24"
+
+    # Clear the previous life's X lock before starting, or an unclean
+    # stop brings the container down permanently.
+    #
+    # /tmp is the writable layer, not a volume, so .X99-lock survives a
+    # stop/start. Xvfb then refuses with "Server is already active for
+    # display 99", the readiness loop below exits 1, and the restart
+    # policy loops that forever. Seen in production 2026-09-04: the pool
+    # container crash-looped 10 times and the tier was down until the
+    # file was removed by hand.
+    #
+    # Unconditional, because a fresh container start means a fresh PID
+    # namespace: nothing from the previous life can still be holding the
+    # display, so any lock found here is stale by definition. Same
+    # reasoning as clearSingletonGuards() for Chrome's profile locks,
+    # and the same failure it exists to prevent.
+    rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+
     log "starting Xvfb on :99 (${screen})"
     Xvfb :99 -screen 0 "${screen}" -ac +extension RANDR -nolisten tcp &
     export DISPLAY=:99
