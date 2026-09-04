@@ -25,6 +25,7 @@ interface LaunchOptions {
   userAgent?: string;
   viewport?: { width: number; height: number } | null;
   args: string[];
+  env?: Record<string, string>;
 }
 
 const MANAGED_ENV = [
@@ -126,29 +127,58 @@ describe('launch identity precedence', () => {
     expect(options.timezoneId).toBe('UTC');
   });
 
-  it('lets the per-session locale win over the container LOCALE', async () => {
+  it('never passes locale to the context, because that value never reaches a worker', async () => {
+    // Measured on the live container 2026-09-04. Playwright's `locale`
+    // is delivered by `Emulation.setUserAgentOverride({acceptLanguage})`
+    // on the PAGE's own CDP session, and patchright's worker-attach
+    // handler (crPage.js:664-699) never sends it to the worker session,
+    // so the main thread read fr-FR while a Worker read en-US,en. That
+    // is a combination no real browser produces, and one public
+    // detector flips its whole verdict on it while all 21 of its other
+    // signals stay clean.
     process.env.LOCALE = 'fr-FR';
 
-    const options = await launchWith({ locale: 'tr-TR' });
-
-    expect(options.locale).toBe('tr-TR');
+    expect((await launchWith({ locale: 'tr-TR' })).locale).toBeUndefined();
+    expect((await launchWith()).locale).toBeUndefined();
   });
 
-  it('takes the container LOCALE when the session names none', async () => {
+  it('declares the language through the browser process environment instead', async () => {
+    // Chrome derives navigator.language, navigator.languages AND the
+    // Accept-Language header from its application locale, which on
+    // Linux comes from LANG/LC_*. That is one native value read by
+    // every execution context, so the main thread and a Worker cannot
+    // disagree. Verified live across fr, tr and de: identical in both
+    // contexts, with Accept-Language on the wire reading
+    // `fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7`.
     process.env.LOCALE = 'fr-FR';
 
-    const options = await launchWith();
+    const perSession = await launchWith({ locale: 'tr-TR' });
 
-    expect(options.locale).toBe('fr-FR');
+    expect(perSession.env?.LANG).toBe('tr_TR.UTF-8');
+    expect(perSession.env?.LANGUAGE).toBe('tr_TR');
+    expect(perSession.env?.LC_ALL).toBe('tr_TR.UTF-8');
+
+    // The container LOCALE stays the floor for a session that names none.
+    expect((await launchWith()).env?.LANG).toBe('fr_FR.UTF-8');
   });
 
-  it('leaves locale unset when neither side names one', async () => {
-    // The resolver floors locale at 'en-US'. Consuming that floor
-    // would force a locale where an unset session passes none today,
-    // which is a behaviour change this wiring is not allowed to make.
+  it('inherits the rest of the environment rather than replacing it', async () => {
+    // Playwright's `env` REPLACES the browser process environment. A
+    // partial object would drop DISPLAY and leave chrome with no X
+    // server to draw on.
+    process.env.LOCALE = 'fr-FR';
+    process.env.DISPLAY = ':99';
+
+    expect((await launchWith()).env?.DISPLAY).toBe(':99');
+  });
+
+  it('leaves the environment alone when neither side names a locale', async () => {
+    // An unset session passed no locale before this change and must
+    // still impose none, or every run inherits a language nobody chose.
     const options = await launchWith();
 
     expect(options.locale).toBeUndefined();
+    expect(options.env?.LANG).toBeUndefined();
   });
 
   it('takes the container USER_AGENT when the session names none, and yields to the session when it does', async () => {

@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+## v0.6.7 (2026-09-04)
+
+Declare the language through the browser process environment, because
+Playwright's `locale` never reaches a Web Worker.
+
+`locale` is delivered by `Emulation.setUserAgentOverride` with an
+`acceptLanguage` on the page's own CDP session. Both the command and
+the session are per-target, and patchright's worker-attach handler
+(`crPage.js:664-699`) wires up execution contexts, network and console
+for a worker but never sends the override to it. So the main thread
+read `fr-FR` while a `Worker` read `en-US,en`: a combination no real
+browser produces, and enough on its own for
+deviceandbrowserinfo.com/are_you_a_bot to answer `isBot: true` while
+all 21 of its other signals stayed clean. The identity work that closed
+one signal had opened a louder one.
+
+Chrome derives `navigator.language`, `navigator.languages` and the
+outgoing `Accept-Language` from its application locale, which on Linux
+comes from `LANG`/`LC_*`. One native value, read by every execution
+context, with no wrapped getter for a prototype-chain detector to
+catch. Every session already launches its own browser process, so this
+stays per-session.
+
+Verified live across fr, tr and de: main thread and worker report an
+identical `fr-FR,fr,en-US,en`, and the wire carries
+`Accept-Language: fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7`. That list is
+also the shape a real chrome produces, where `locale` yielded a
+single-entry `["fr-FR"]` with no fallback.
+
+Seeding `intl.accept_languages` into the profile Preferences was tried
+first and does not work: chrome recomputes that pref from the
+application locale at startup and overwrote it back on the next launch.
+
+No API change. The sidecar still accepts `locale` on session create and
+`LOCALE` on the container; only what it does with the value changed.
+
 ## v0.6.6 (2026-09-04)
 
 Start Xvfb with `-noreset`, or the work area v0.6.4 added never

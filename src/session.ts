@@ -46,6 +46,58 @@ export function clearSingletonGuards(profilePath: string): void {
  * Mirrors the helper in poke-api/docker/chrome-worker so the same
  * UX never flips back on between codebases.
  */
+/**
+ * Turn a BCP-47 tag into the browser process environment that declares
+ * it, or undefined when nothing named a language.
+ *
+ * Playwright's `locale` option is the obvious way to do this and it is
+ * the wrong one. It is delivered by `Emulation.setUserAgentOverride`
+ * with an `acceptLanguage` on the PAGE's own CDP session, and both that
+ * command and the session are per-target: patchright's worker-attach
+ * handler (`patchright-core/lib/server/chromium/crPage.js:664-699`)
+ * sets up execution contexts, network and console for a worker and
+ * never sends the override to it. Measured on the live container: the
+ * main thread read `fr-FR` while a `Worker` read `en-US,en`, a
+ * combination no real browser produces. It was enough on its own for
+ * deviceandbrowserinfo.com to answer `isBot: true` with all 21 of its
+ * other signals clean.
+ *
+ * Chrome instead derives `navigator.language`, `navigator.languages`
+ * and the outgoing `Accept-Language` from its application locale, which
+ * on Linux comes from `LANG`/`LC_*`. That is one native value every
+ * execution context reads, so the two cannot disagree, and there is no
+ * wrapped getter for a prototype-chain lie detector to catch.
+ *
+ * Seeding `intl.accept_languages` into the profile's Preferences was
+ * tried first and does not work: chrome recomputes that pref from the
+ * application locale at startup and overwrote `fr-FR,fr` back to
+ * `en-US,en` on the next launch.
+ *
+ * Verified live across fr, tr and de. Main thread and worker report an
+ * identical `fr-FR,fr,en-US,en`, and the wire carries
+ * `Accept-Language: fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7`. That list
+ * shape is also what a real chrome produces, where the `locale` option
+ * yielded a single-entry `["fr-FR"]` with no fallback.
+ *
+ * The whole of `process.env` is spread in because Playwright's `env`
+ * REPLACES the browser process environment rather than extending it,
+ * and dropping `DISPLAY` would leave chrome with no X server.
+ */
+function localeEnvironment(locale: string | undefined): Record<string, string> | undefined {
+  if (locale === undefined || locale === '') {
+    return undefined;
+  }
+
+  const posix = locale.replace('-', '_');
+
+  return {
+    ...(process.env as Record<string, string>),
+    LANG: `${posix}.UTF-8`,
+    LANGUAGE: posix,
+    LC_ALL: `${posix}.UTF-8`,
+  };
+}
+
 function seedChromePreferences(profilePath: string): void {
   const defaultDir = join(profilePath, 'Default');
   const prefsPath = join(defaultDir, 'Preferences');
@@ -318,6 +370,7 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
   // forcing a locale where none was asked for is a behaviour change
   // beyond this wiring. So the env has to actually say something.
   const containerLocale = process.env.LOCALE ? containerIdentity.locale : undefined;
+  const launchEnv = localeEnvironment(input.locale ?? containerLocale);
 
   const context = await withLaunchLock(() =>
     chromium.launchPersistentContext(profilePath, {
@@ -325,7 +378,8 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
       headless: process.env.DISPLAY ? false : true,
       proxy: input.proxy,
       userAgent: input.userAgent ?? containerIdentity.userAgent,
-      locale: input.locale ?? containerLocale,
+      // `locale` is deliberately NOT passed. See localeEnvironment().
+      ...(launchEnv === undefined ? {} : { env: launchEnv }),
       // The whole point of the wiring: a browser leaving from a proxy
       // in Istanbul used to declare the host clock, because nothing
       // read the TIMEZONE the provisioner hands every container.
