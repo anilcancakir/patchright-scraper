@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## v0.6.4 (2026-09-04)
+
+Give the browser a work area and the keyboard a cadence on the two
+paths that still had neither.
+
+`composeThread` was the last text-entry step committing through
+`keyboard.insertText`, which routes to Chromium's `ImeCommitText` and
+emits no key events at all. A threading account therefore published its
+text with no inter-key timing whatever, on a network that names typing
+cadence as collected telemetry. It now types character by character
+with the same log-normal sampler `type` uses, behind a new `delay`
+option defaulting to the 240 ms literature mean; `delay: 0` is an
+explicit opt-out that restores the old commit.
+
+`delay` is deliberately NOT budgeted against `timeout` the way `type`
+budgets it. Here `timeout` has only ever bounded locator resolution, and
+giving it a second meaning would refuse every stored thread recipe on
+sight: the live one carries `timeout: 20000` and one 280-character part
+at the default needs about 67,000 ms. The job timeout is the backstop.
+
+The container now declares `_NET_WORKAREA` on the root window after
+Xvfb comes up, reserving 40 px of height (`WORKAREA_PANEL_PX`). With no
+window manager nothing sets that property, and Chromium then leaves the
+work area at the full display bounds, so a page read
+`screen.availHeight === screen.height`: true on a bare X server and
+almost nowhere else. No window manager is installed to fix it, because
+Chromium's reader gates only on the property being 4 cardinals of
+format 32. Measured on the live pool container: 1080 before, 1040
+after. Width is left alone, because a taskbar or a top bar does not
+narrow it and `availWidth === width` is the ordinary desktop reading.
+
 ## v0.6.1 (2026-08-28)
 
 Clear Chrome's single-instance guards before opening a persistent

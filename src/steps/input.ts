@@ -321,6 +321,48 @@ export const insertText: StepExecutor = {
   },
 };
 
+/**
+ * Refuse a string that cannot be typed inside the budget, rather than
+ * overrunning it.
+ *
+ * Playwright's own `pressSequentially` bounds itself against the
+ * timeout; the per-character loop below does not, so a long string at a
+ * human gap would hold the browser far past the declared timeout. Both
+ * levers are named in the message because either one fixes it and the
+ * right choice depends on whether the text or the pace is the point.
+ */
+function assertTypingFitsBudget(text: string, delay: number, remainingMs: number): void {
+  const projectedMs = text.length * delay;
+
+  if (projectedMs > remainingMs) {
+    throw new Error(
+      `Typing ${text.length} characters at ~${delay}ms each needs about ${projectedMs}ms, ` +
+        `but only ${remainingMs}ms of the step budget is left. ` +
+        'Raise "timeout" or lower "delay" (0 types instantly).',
+    );
+  }
+}
+
+/**
+ * Type into the already-focused element one character at a time, with a
+ * sampled gap between keys.
+ *
+ * `keyboard.type` sends the real keydown/keypress/keyup triple for one
+ * character. `keyboard.insertText` would deliver the same text through
+ * Chromium's `ImeCommitText` with no key events at all, which is what
+ * every text-entry path here used to do.
+ *
+ * Caller establishes focus first, and how it does that is not the same
+ * everywhere: a rich contentEditable needs a real click, a native input
+ * is happy with `focus()`.
+ */
+async function typeWithCadence(page: Page, text: string, delay: number): Promise<void> {
+  for (const char of text) {
+    await page.keyboard.type(char);
+    await new Promise((resolve) => setTimeout(resolve, sampleKeystrokeGap(delay)));
+  }
+}
+
 export const type: StepExecutor = {
   name: 'type',
   description: 'Type text character-by-character with optional per-key delay.',
@@ -361,30 +403,16 @@ export const type: StepExecutor = {
       return { ok: true, output: { length: c.text.length, locatorIndex: target.index } };
     }
 
-    // Refuse up front rather than overrun. Playwright's own type() bounds
-    // itself against the timeout; a hand-rolled loop does not, so a long
-    // string at a human gap would hold the browser far past the declared
-    // timeout. Both levers are named because either one fixes it and the
-    // right choice depends on whether the text or the pace is the point.
-    const projectedMs = c.text.length * c.delay;
+    assertTypingFitsBudget(c.text, c.delay, target.remainingMs);
 
-    if (projectedMs > target.remainingMs) {
-      throw new Error(
-        `Typing ${c.text.length} characters at ~${c.delay}ms each needs about ${projectedMs}ms, ` +
-          `but only ${target.remainingMs}ms of the step budget is left. ` +
-          'Raise "timeout" or lower "delay" (0 types instantly).',
-      );
-    }
-
+    // `focus()`, not `click()`: this step also serves native inputs, and
+    // a click carries a pointer path plus a real mousedown that a plain
+    // field does not need. A rich contentEditable keys its edit mode off
+    // a click-sourced focus event and stays inert here, so a recipe
+    // driving one puts its own `click` step in front. The three X
+    // recipes do exactly that.
     await target.locator.focus({ timeout: target.remainingMs });
-
-    // Per character, so the gap can be sampled between keys. keyboard.type
-    // sends the real keydown/keypress/keyup triple for one character;
-    // insertText would deliver the text with no key events at all.
-    for (const char of c.text) {
-      await ctx.page.keyboard.type(char);
-      await new Promise((resolve) => setTimeout(resolve, sampleKeystrokeGap(c.delay)));
-    }
+    await typeWithCadence(ctx.page, c.text, c.delay);
 
     return { ok: true, output: { length: c.text.length, locatorIndex: target.index } };
   },
@@ -672,6 +700,20 @@ export const setInputFiles: StepExecutor = {
  *
  * Nothing is submitted. The recipe still owns the click that publishes,
  * so a caller can inspect or abandon a composed thread.
+ *
+ * `timeout` bounds locator resolution and nothing else, which is what it
+ * has always meant here, and the typing loop is deliberately NOT checked
+ * against it. Reusing it as a typing budget would give an existing key a
+ * new meaning and refuse every stored thread recipe the moment this
+ * ships: the live one carries `timeout: 20000`, and one 280-character
+ * part at the 240 ms default needs about 67,000. `type` can afford that
+ * guard because its recipes were written alongside it; this one cannot.
+ *
+ * The backstop is therefore the job timeout (1500 s on
+ * `RunSocialActionJob`). Worst case at the recipe's five-part policy
+ * ceiling is about 336 s of typing, comfortably inside it. The schema's
+ * own 25-part ceiling is not: a maxed thread would exceed the job and
+ * cost a draft, which is the same price every other failure here pays.
  */
 export const composeThread: StepExecutor = {
   name: 'composeThread',
@@ -682,6 +724,7 @@ export const composeThread: StepExecutor = {
       editorTemplate: z.string().min(1),
       addButton: LocatorSpec,
       parts: z.array(z.string().min(1)).min(1).max(25),
+      delay: z.number().int().nonnegative().default(KEYSTROKE_MEAN_MS),
       timeout: TimeoutMs.default(20_000),
     })
     .strict(),
@@ -690,6 +733,7 @@ export const composeThread: StepExecutor = {
       editorTemplate: string;
       addButton: Candidates;
       parts: string[];
+      delay: number;
       timeout: number;
     };
 
@@ -702,11 +746,19 @@ export const composeThread: StepExecutor = {
       const selector = c.editorTemplate.replaceAll('{index}', String(index));
       const editor = await resolveLocator(ctx.page, [{ selector, nth: 0 }], c.timeout);
 
-      // Clicked rather than focused, for the same reason insertText
-      // clicks: a rich editor keys its edit mode off a real
-      // click-sourced focus event and stays inert otherwise.
+      // Clicked rather than focused: a rich editor keys its edit mode
+      // off a real click-sourced focus event and stays inert otherwise.
       await editor.locator.click({ timeout: editor.remainingMs });
-      await ctx.page.keyboard.insertText(part);
+
+      if (c.delay <= 0) {
+        // Explicit opt-out, and the behaviour every stored thread recipe
+        // had before this key existed. Commits the part the way an IME
+        // does, with no key events at all.
+        await ctx.page.keyboard.insertText(part);
+        continue;
+      }
+
+      await typeWithCadence(ctx.page, part, c.delay);
     }
 
     return { ok: true, output: { parts: c.parts.length } };

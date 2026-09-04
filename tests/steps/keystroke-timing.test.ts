@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { KEYSTROKE_MEAN_MS, sampleKeystrokeGap, type } from '../../src/steps/input.js';
+import { composeThread, KEYSTROKE_MEAN_MS, sampleKeystrokeGap, type } from '../../src/steps/input.js';
 import { makeCtx, makeLocator, makePage, runStep } from './_helpers.js';
 
 /**
@@ -125,6 +125,86 @@ describe('type step timing', () => {
     ).rejects.toThrow(/timeout.*delay|delay.*timeout/i);
 
     expect(page.keyboard.type).not.toHaveBeenCalled();
+  });
+
+  it('composeThread types each part per character rather than committing it whole', async () => {
+    // A thread was the one text-entry path left on `insertText`, which
+    // routes through Chromium's ImeCommitText and emits no key events at
+    // all. The three single-post recipes moved to `type` at the recipe
+    // level; this one has no recipe-level lever because the typing lives
+    // inside the step.
+    const locator = makeLocator();
+    (locator as unknown as { nth: unknown }).nth = vi.fn(() => locator);
+    const page = makePage({ locator: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
+
+    await runStep(composeThread, ctx, {
+      editorTemplate: '[data-testid="tweetTextarea_{index}"]',
+      addButton: { selector: '[data-testid="addButton"]' },
+      parts: ['ab', 'cd'],
+      delay: 5,
+      timeout: 5_000,
+    });
+
+    expect(page.keyboard.type.mock.calls.map((call) => call[0])).toEqual(['a', 'b', 'c', 'd']);
+    expect(page.keyboard.insertText).not.toHaveBeenCalled();
+  });
+
+  it('composeThread defaults to the same literature mean as type', () => {
+    const parsed = composeThread.schema.safeParse({
+      editorTemplate: '#e{index}',
+      addButton: { selector: '#add' },
+      parts: ['one'],
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && (parsed.data as { delay: number }).delay).toBe(KEYSTROKE_MEAN_MS);
+  });
+
+  it('composeThread keeps a delay-0 opt-out that commits the part whole', async () => {
+    // A stored recipe can still ask for the old behaviour, and the
+    // schema is strict, so the key has to be optional with a default or
+    // every existing thread row fails to parse the moment this ships.
+    const locator = makeLocator();
+    (locator as unknown as { nth: unknown }).nth = vi.fn(() => locator);
+    const page = makePage({ locator: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
+
+    await runStep(composeThread, ctx, {
+      editorTemplate: '[data-testid="tweetTextarea_{index}"]',
+      addButton: { selector: '[data-testid="addButton"]' },
+      parts: ['ab'],
+      delay: 0,
+      timeout: 5_000,
+    });
+
+    expect(page.keyboard.insertText).toHaveBeenCalledWith('ab');
+    expect(page.keyboard.type).not.toHaveBeenCalled();
+  });
+
+  it('composeThread does not budget its typing against timeout, which would refuse every stored recipe', async () => {
+    // The live thread recipe carries `timeout: 20000` and its parts run
+    // to 280 characters, which at the 240ms default projects to about
+    // 67,000ms. `type` refuses that; this step must not, because here
+    // `timeout` has only ever meant locator resolution and giving it a
+    // second meaning breaks rows that were written before the key
+    // existed. Regression guard for exactly that, so the reproducer is
+    // the live recipe's own shape.
+    const locator = makeLocator();
+    (locator as unknown as { nth: unknown }).nth = vi.fn(() => locator);
+    const page = makePage({ locator: vi.fn(() => locator) as never });
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(composeThread, ctx, {
+      editorTemplate: '#e{index}',
+      addButton: { selector: '#add' },
+      parts: ['x'.repeat(280)],
+      delay: 1,
+      timeout: 20_000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(page.keyboard.type).toHaveBeenCalledTimes(280);
   });
 
   it('bites sooner at the raised default mean, still naming both levers', async () => {

@@ -22,11 +22,63 @@ start_xvfb() {
     # Give Xvfb a moment to actually accept connections; cheap loop avoids
     # racing the browser launch.
     for _ in {1..20}; do
-        xdpyinfo -display :99 >/dev/null 2>&1 && return
+        if xdpyinfo -display :99 >/dev/null 2>&1; then
+            declare_work_area
+            return
+        fi
         sleep 0.1
     done
     log "Xvfb did not become ready"
     exit 1
+}
+
+# Reserve a panel-sized strip of the screen, so a page reads
+# screen.availHeight < screen.height the way it does on any real desktop.
+#
+# With no window manager nothing sets _NET_WORKAREA, and chromium then
+# leaves the work area at the full display bounds: availHeight ==
+# height, which is true on a bare X server and almost nowhere else.
+#
+# No window manager is installed to fix it, because none is needed.
+# Verified at chromium 05ac68951abd29aa0eb16207fbbe5f8d3042c3a9:
+# GetWorkAreaSync (ui/base/x/x11_display_util.cc:73-82) gates only on
+# "the fetch returned format 32 with exactly 4 values". It checks
+# neither _NET_SUPPORTING_WM_CHECK nor _NET_SUPPORTED, and it reads the
+# first 4 cardinals rather than indexing by _NET_CURRENT_DESKTOP, so one
+# property on the root window is the whole requirement. ClipWorkArea
+# (:139-179) then intersects it into the primary display, and
+# DisplayUtil::DisplayToScreenInfo (ui/display/display_util.cc:19)
+# copies work_area into the available_rect that Screen::availHeight
+# reads. Measured on the live pool container 2026-09-04: 1080 before,
+# 1040 after.
+#
+# Height only. A bottom taskbar or a top bar leaves the width alone, so
+# availWidth == width is the ordinary case on a real desktop and
+# narrowing it would be the rarer reading.
+#
+# The rect must be strictly smaller than the display or ClipWorkArea's
+# "the work area contains the whole display, so leave it alone" branch
+# takes it and nothing changes.
+declare_work_area() {
+    local reserve="${WORKAREA_PANEL_PX:-40}"
+    local viewport="${VIEWPORT:-1920x1080}"
+    local width="${viewport%%x*}"
+    local height="${viewport##*x}"
+
+    if [[ ! "${width}${height}" =~ ^[0-9]+$ ]] || (( height <= reserve )); then
+        log "work area left unset: VIEWPORT=${viewport} reserve=${reserve}"
+        return
+    fi
+
+    # Not fatal. A container without a work area is what every release
+    # before this one shipped, and refusing to start over a fingerprint
+    # detail would take the tier down for a strictly smaller problem.
+    if xprop -root -f _NET_WORKAREA 32c \
+        -set _NET_WORKAREA "0, 0, ${width}, $((height - reserve))" 2>/dev/null; then
+        log "work area ${width}x$((height - reserve)) of ${viewport}"
+    else
+        log "WARNING: could not set _NET_WORKAREA; availHeight will equal screen height"
+    fi
 }
 
 start_vnc() {

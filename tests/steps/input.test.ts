@@ -243,7 +243,7 @@ describe('input primitives (Playwright shape)', () => {
       locator: vi.fn((selector: string) =>
         selector.includes('addButton') ? add : editor) as never,
     });
-    page.keyboard.insertText = vi.fn(async (text: string) => { order.push(`type:${text}`); }) as never;
+    page.keyboard.type = vi.fn(async (char: string) => { order.push(`type:${char}`); }) as never;
 
     const { ctx } = makeCtx({ page });
 
@@ -251,14 +251,20 @@ describe('input primitives (Playwright shape)', () => {
       editorTemplate: '[data-testid="tweetTextarea_{index}"]',
       addButton: { selector: '[data-testid="addButton"]' },
       parts: ['one', 'two', 'three'],
+      delay: 1,
       timeout: 5_000,
     });
 
+    // Per character, because the step now types rather than committing
+    // the part whole. The interleaving is what this test is for: a part
+    // is fully typed before the add that opens the next one.
+    const typed = (part: string): string[] => [...part].map((char) => `type:${char}`);
+
     expect(result.ok).toBe(true);
     expect(order).toEqual([
-      'click-editor', 'type:one',
-      'click-add', 'click-editor', 'type:two',
-      'click-add', 'click-editor', 'type:three',
+      'click-editor', ...typed('one'),
+      'click-add', 'click-editor', ...typed('two'),
+      'click-add', 'click-editor', ...typed('three'),
     ]);
   });
 
