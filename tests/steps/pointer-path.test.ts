@@ -175,6 +175,36 @@ describe('pointer path on click/dblclick/hover', () => {
     expect(largest).toBeLessThanOrEqual(POINTER_MAX_STEP_PX * 2);
   });
 
+  it('spends only a slice of the action budget on the approach', async () => {
+    // Chrome delivers one move per frame, so a 60-point path costs a full
+    // second of wall clock, and `resolveLocator` floors the action budget
+    // at 1000ms. Left unbounded, a long travel on a tight step would eat
+    // the whole floor and the click behind it would time out with the
+    // path, not the page, as the cause. That is a regression this change
+    // introduced and this is the guard for it.
+    const box = { x: 1800, y: 1000, width: 40, height: 20 };
+
+    const tightLocator = makeLocator({ boundingBox: vi.fn(async () => box) });
+    const tightPage = makePage({ locator: vi.fn(() => tightLocator) as never });
+    await runStep(click, makeCtx({ page: tightPage }).ctx, {
+      locator: { selector: '.far' },
+      timeout: 1_000,
+    });
+
+    const roomyLocator = makeLocator({ boundingBox: vi.fn(async () => box) });
+    const roomyPage = makePage({ locator: vi.fn(() => roomyLocator) as never });
+    await runStep(click, makeCtx({ page: roomyPage }).ctx, {
+      locator: { selector: '.far' },
+      timeout: 30_000,
+    });
+
+    expect(tightPage.mouse.move.mock.calls.length).toBeLessThan(
+      roomyPage.mouse.move.mock.calls.length,
+    );
+    // Same travel either way, so the target is still reached exactly.
+    expect(pathOf(tightPage).at(-1)).toEqual([1820, 1010]);
+  });
+
   it('settles with a small tremor rather than freezing on the centre', async () => {
     const locator = makeLocator();
     const page = makePage({ locator: vi.fn(() => locator) as never });

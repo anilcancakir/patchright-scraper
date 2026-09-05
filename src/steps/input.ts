@@ -226,6 +226,27 @@ const POINTER_MIN_TRAVEL_PX = 4;
 /** Hard ceiling on points, so a viewport-crossing move still ends. */
 const POINTER_MAX_POINTS = 60;
 
+/**
+ * Milliseconds one point costs, for budgeting purposes.
+ *
+ * Not a sleep. Chrome delivers `mousemove` on the frame boundary, so a
+ * point costs one frame of wall clock whether or not we wait for it, and
+ * a 60Hz frame is 16.6ms.
+ */
+const POINTER_FRAME_MS = 17;
+
+/**
+ * Share of the action budget the approach may spend.
+ *
+ * `resolveLocator` floors the action budget at 1000ms, and an unbounded
+ * 60-point path costs a whole second, so a long travel on a tight step
+ * would consume the entire floor and the click behind it would fail as
+ * `Timeout 1000ms exceeded` with the path, not the page, as the cause.
+ * That failure mode is the one the reserve in `locator.ts` exists to
+ * prevent, and it would have been reintroduced here.
+ */
+const POINTER_BUDGET_SHARE = 0.4;
+
 /** Bounds of the overshoot past the target before the correction back. */
 const OVERSHOOT_MIN_PX = 2;
 const OVERSHOOT_MAX_PX = 6;
@@ -302,11 +323,15 @@ function easeInOut(t: number): number {
  * same fixed count emits a dense cluster inside a few pixels, so the
  * count has to shrink with it ({@link POINTER_MIN_STEP_PX}).
  */
-function pointerPointCount(distance: number, requested: number): number {
+function pointerPointCount(distance: number, requested: number, budgetMs: number): number {
   const dense = Math.ceil(distance / POINTER_MAX_STEP_PX);
   const sparse = Math.ceil(distance / POINTER_MIN_STEP_PX);
+  const affordable = Math.floor((budgetMs * POINTER_BUDGET_SHARE) / POINTER_FRAME_MS);
 
-  return Math.max(2, Math.min(POINTER_MAX_POINTS, Math.max(dense, Math.min(requested, sparse))));
+  return Math.max(
+    2,
+    Math.min(POINTER_MAX_POINTS, affordable, Math.max(dense, Math.min(requested, sparse))),
+  );
 }
 
 /**
@@ -345,6 +370,7 @@ async function movePointerToBoxCentre(
   page: Page,
   box: { x: number; y: number; width: number; height: number } | null,
   steps: number,
+  budgetMs: number,
 ): Promise<void> {
   if (box === null) {
     return;
@@ -358,7 +384,7 @@ async function movePointerToBoxCentre(
   const distance = Math.hypot(dx, dy);
 
   if (distance >= POINTER_MIN_TRAVEL_PX) {
-    const points = pointerPointCount(distance, steps);
+    const points = pointerPointCount(distance, steps, budgetMs);
     // Unit vector along the travel, and its perpendicular, so the
     // overshoot runs past the target and the tremor runs across it.
     const alongX = dx / distance;
@@ -411,7 +437,7 @@ export const click: StepExecutor = {
     };
     const target = await resolveLocator(ctx.page, c.locator, c.timeout);
     const box = await target.locator.boundingBox({ timeout: target.remainingMs });
-    await movePointerToBoxCentre(ctx.page, box, c.pointerSteps);
+    await movePointerToBoxCentre(ctx.page, box, c.pointerSteps, target.remainingMs);
     await target.locator.click({
       button: c.button,
       clickCount: c.clickCount,
@@ -452,7 +478,7 @@ export const dblclick: StepExecutor = {
     };
     const target = await resolveLocator(ctx.page, c.locator, c.timeout);
     const box = await target.locator.boundingBox({ timeout: target.remainingMs });
-    await movePointerToBoxCentre(ctx.page, box, c.pointerSteps);
+    await movePointerToBoxCentre(ctx.page, box, c.pointerSteps, target.remainingMs);
     await target.locator.dblclick({
       button: c.button,
       delay: sampleHoldMs(c.delay),
@@ -723,7 +749,7 @@ export const hover: StepExecutor = {
     };
     const target = await resolveLocator(ctx.page, c.locator, c.timeout);
     const box = await target.locator.boundingBox({ timeout: target.remainingMs });
-    await movePointerToBoxCentre(ctx.page, box, c.pointerSteps);
+    await movePointerToBoxCentre(ctx.page, box, c.pointerSteps, target.remainingMs);
     await target.locator.hover({ force: c.force, timeout: target.remainingMs });
 
     return { ok: true, output: { hovered: true, locatorIndex: target.index } };
