@@ -206,6 +206,36 @@ describe('launch flags', () => {
     expect(options.args.some((arg) => arg.startsWith('--disable-features='))).toBe(true);
   });
 
+  it('turns WebGL back on through the software rasteriser', async () => {
+    // Without this the container has no WebGL AT ALL: measured
+    // 2026-09-05 on the live pool container, getContext returned null
+    // for 'webgl', 'webgl2' and 'experimental-webgl' alike, while
+    // `WebGLRenderingContext` still existed as a function. chrome://gpu
+    // named the cause: "GPU process was unable to boot: GPU access is
+    // disabled due to frequent crashes. Disabled Features: all".
+    //
+    // A desktop browser that cannot create a WebGL context is close to
+    // unheard of, and every fingerprinting suite in play here (Arkose's
+    // enhanced_fp, Castle, Socure, all three live in x.com's own CSP)
+    // reads the WebGL vendor and renderer. Absent is rarer than
+    // software-rendered.
+    //
+    // Three variants were launched inside the container to pick this
+    // one. `--enable-unsafe-swiftshader` and
+    // `--use-gl=angle --use-angle=swiftshader` both produce
+    // "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)
+    // (0x0000C0DE)), SwiftShader driver)". Routing ANGLE at the Mesa
+    // llvmpipe device that chrome://gpu advertises as GPU0 does NOT
+    // work: `--use-angle=gl` still returned null, with or without the
+    // swiftshader flag. So the choice is binary, no WebGL or a
+    // SwiftShader renderer string, and the llvmpipe string that would
+    // have read as an ordinary driverless Linux desktop is not
+    // reachable in this image.
+    const options = await launchWith();
+
+    expect(options.args).toContain('--enable-unsafe-swiftshader');
+  });
+
   it('never passes --disable-infobars', async () => {
     // Removed from chrome's switch table; measured 2026-09-03 on the
     // live prod container to leave chromeH at 143, exactly as without

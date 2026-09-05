@@ -189,6 +189,30 @@ const SCRAPING_DISABLE_FEATURES = [
  * found a 945-wide window sitting at 10,10 on a 1920x1080 screen; both
  * were confirmed settable (`--window-size=1280,900` produced outerWidth
  * 1280, `--window-position=0,0` produced screenX/Y 0,0).
+ *
+ * `--enable-unsafe-swiftshader` is the difference between having WebGL
+ * and not having it. Measured 2026-09-05 in the live pool container:
+ * without it, `getContext` returned null for 'webgl', 'webgl2' AND
+ * 'experimental-webgl' while `WebGLRenderingContext` still existed as a
+ * function, and `chrome://gpu` gave the reason as "GPU process was unable
+ * to boot: GPU access is disabled due to frequent crashes. Disabled
+ * Features: all". There is no `/dev/dri` in the container and chrome no
+ * longer falls back to a software rasteriser for WebGL on its own.
+ *
+ * A desktop browser with no WebGL context at all is close to unheard of,
+ * and every fingerprinting suite x.com loads (Arkose, Castle and Socure
+ * are all named in its own CSP) reads the WebGL vendor and renderer.
+ * "Absent" is a rarer answer than "software rendered", so this trades one
+ * for the other knowingly: the renderer now reads "ANGLE (Google, Vulkan
+ * 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)".
+ *
+ * Three variants were launched in the container to pick this one.
+ * `--use-gl=angle --use-angle=swiftshader` produces the identical string,
+ * so the shorter flag wins. Routing ANGLE at the Mesa llvmpipe device
+ * that `chrome://gpu` advertises as GPU0 does NOT work: `--use-angle=gl`
+ * returned null with and without the swiftshader flag. The llvmpipe
+ * renderer string, which would have read as an ordinary Linux desktop
+ * with no GPU driver, is simply not reachable in this image.
  */
 function resolveChromeArgs(viewport: { width: number; height: number }): string[] {
   return [
@@ -199,6 +223,7 @@ function resolveChromeArgs(viewport: { width: number; height: number }): string[
     // surface.
     `--disable-features=${SCRAPING_DISABLE_FEATURES}`,
     '--test-type',
+    '--enable-unsafe-swiftshader',
     `--window-size=${viewport.width},${viewport.height}`,
     '--window-position=0,0',
   ];

@@ -51,12 +51,60 @@ export const KEYSTROKE_MEAN_MS = 240;
 const KEYSTROKE_LOGNORMAL_SIGMA = 0.6;
 
 /**
- * One inter-keystroke gap, in milliseconds, drawn from a log-normal
- * distribution parameterised so its mean equals `mean`.
+ * Mean time one key stays down, in milliseconds.
  *
- * Exported for its own test: the shape that matters (heavy-tailed and
- * right-skewed, not a clamped band) is worth pinning directly rather
- * than inferring from wall-clock timings inside a step test.
+ * Dhakal et al. again, the same 136M-keystroke dataset the gap above is
+ * sized from: keypress duration 116.25ms, SD 23.88, right-skewed
+ * (skewness 0.8). The paper notes it barely moves with typing speed,
+ * staying inside 80 to 150ms between the fastest and slowest deciles of
+ * 168,960 participants, so this is close to a constant of the hand
+ * rather than a per-person style.
+ *
+ * v0.6.7 held every key for nothing at all. Playwright's `delay` is the
+ * hold, not the gap (`playwright-core/src/server/input.ts` at `b4e7c87`:
+ * `press` does `down`, `wait(delay)`, `up`), and the cadence work passed
+ * none of it, sleeping between characters instead. Measured on the live
+ * pool container 2026-09-05: 1 to 2ms per key, roughly five standard
+ * deviations below this mean and outside the range that paper observed.
+ */
+export const KEY_HOLD_MEAN_MS = 116;
+
+/**
+ * Mean time a mouse button stays down, in milliseconds.
+ *
+ * No large-sample measurement of mousedown-to-mouseup was found, so this
+ * is anchored on {@link KEY_HOLD_MEAN_MS}: a click and a keypress are the
+ * same motor act, one finger flexing and releasing, and Dhakal is the
+ * largest published measurement of that act. Trimmed to 90 because a
+ * mouse button has less travel than a key switch, which is a judgement
+ * and not a measurement, and it is written down here so the next person
+ * knows which part is sourced.
+ *
+ * Arkose's own biometrics tooling is reported to bucket click duration as
+ * "30-100ms common human, above 100ms very human". That page refused
+ * connections on three attempts from here, so it is corroboration we
+ * could not read, never the source.
+ *
+ * Measured before the change: 0.5ms.
+ */
+export const CLICK_HOLD_MEAN_MS = 90;
+
+/**
+ * Log-normal shape parameter for a hold time.
+ *
+ * Dhakal's hold has CV 23.88 / 116.25 = 0.205, and for a log-normal
+ * `CV = sqrt(exp(sigma^2) - 1)`, so sigma 0.2 reproduces it. That is a
+ * third of {@link KEYSTROKE_LOGNORMAL_SIGMA}, and deliberately: the gap
+ * between keys genuinely varies by a factor of several (CV 0.47 in the
+ * same paper) while the hold does not. Sampling a hold with the gap's
+ * spread would produce 20ms and 400ms presses, neither of which that
+ * dataset contains.
+ */
+const HOLD_LOGNORMAL_SIGMA = 0.2;
+
+/**
+ * One draw, in milliseconds, from a log-normal parameterised so its mean
+ * equals `mean` and its shape is `sigma`.
  *
  * Box-Muller turns two uniform draws into one standard normal, which is
  * then exponentiated. `mu` is solved from the log-normal mean identity
@@ -64,7 +112,7 @@ const KEYSTROKE_LOGNORMAL_SIGMA = 0.6;
  * caller's `mean` argument rather than on `mean` shifted by the shape
  * parameter.
  */
-export function sampleKeystrokeGap(mean: number): number {
+function sampleLogNormal(mean: number, sigma: number): number {
   if (mean <= 0) {
     return 0;
   }
@@ -74,30 +122,125 @@ export function sampleKeystrokeGap(mean: number): number {
   const u2 = Math.random();
   const standardNormal = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 
-  const mu = Math.log(mean) - (KEYSTROKE_LOGNORMAL_SIGMA ** 2) / 2;
+  const mu = Math.log(mean) - (sigma ** 2) / 2;
 
-  return Math.round(Math.exp(mu + KEYSTROKE_LOGNORMAL_SIGMA * standardNormal));
+  return Math.exp(mu + sigma * standardNormal);
 }
 
 /**
- * Default number of interpolated points a pointer draws on its way to a
- * `click`, `dblclick` or `hover` target, replacing Playwright's own
- * default of a single teleport point: `move(x, y, { steps = 1 })` in
- * playwright-core `input.ts:216-290` interpolates exactly one point when
- * `steps` is omitted, so what ships without this is one instantaneous
- * `mousemove` at the destination rather than a path.
+ * One inter-keystroke gap, in milliseconds.
+ *
+ * Exported for its own test: the shape that matters (heavy-tailed and
+ * right-skewed, not a clamped band) is worth pinning directly rather
+ * than inferring from wall-clock timings inside a step test.
+ */
+export function sampleKeystrokeGap(mean: number): number {
+  return Math.round(sampleLogNormal(mean, KEYSTROKE_LOGNORMAL_SIGMA));
+}
+
+/**
+ * One hold duration, in milliseconds, floored at 1.
+ *
+ * Floored rather than rounded to zero, because zero is the exact value
+ * this function exists to stop emitting.
+ */
+export function sampleHoldMs(mean: number): number {
+  if (mean <= 0) {
+    return 0;
+  }
+
+  return Math.max(1, Math.round(sampleLogNormal(mean, HOLD_LOGNORMAL_SIGMA)));
+}
+
+/**
+ * Baseline number of points a pointer draws on its way to a `click`,
+ * `dblclick` or `hover` target, replacing Playwright's own default of a
+ * single teleport point: `move(x, y, { steps = 1 })` in playwright-core
+ * `input.ts:216-290` interpolates exactly one point when `steps` is
+ * omitted, so what ships without this is one instantaneous `mousemove`
+ * at the destination rather than a path.
  *
  * Sized off Plesner et al. (COMPSAC 2024, arXiv:2409.08831), live against
  * reCAPTCHAv2: no movement averaged 19.23 challenges to pass, straight-line
  * movement ~7, Bezier movement 8.38 (t = 0.58, p = 0.57 against
  * straight-line: not significant). Movement is what matters and curve
- * shape is not measurably better, which is also why this stays a straight
- * line rather than a Bezier: BeCAPTCHA-Mouse (arXiv:2005.00890) and DMTG
- * (arXiv:2410.18233) both classify Bezier-family synthetic trajectories as
- * non-human at 88 to 99.9 per cent, so a curve generator would be trading
- * an unmeasured benefit for a measured tell.
+ * shape is not measurably better, which is also why the macro path stays
+ * a straight line rather than a Bezier: BeCAPTCHA-Mouse (arXiv:2005.00890)
+ * and DMTG (arXiv:2410.18233) both classify Bezier-family synthetic
+ * trajectories as non-human at 88 to 99.9 per cent, so a curve generator
+ * would be trading an unmeasured benefit for a measured tell.
+ *
+ * A count on its own is not the whole story, and the first version of
+ * this got the rest wrong. It handed the count to Playwright's `steps`
+ * option, which divides the line into EQUAL parts, and a page reading the
+ * result back inside the production container on 2026-09-05 saw
+ * `dx = [50,50,50,50,50,50,50,50,50,50,50]`: constant displacement, which
+ * is constant velocity, which no hand produces. See
+ * {@link movePointerToBoxCentre} for what replaced it.
  */
 export const DEFAULT_POINTER_STEPS = 12;
+
+/**
+ * Largest displacement, in pixels, the path aims for between two
+ * consecutive points.
+ *
+ * Chrome delivers `mousemove` on the frame boundary, so displacement per
+ * point IS velocity in pixels per ~16.6ms. Measured in the container: the
+ * observed interval was ~16.6ms whether we dispatched with no sleep at
+ * all, with a 7ms sleep, or through Playwright's own interpolation, and a
+ * 40ms sleep came back as ~50ms, three whole frames. Sub-frame timing is
+ * therefore invisible to the page, for a human as much as for us, which
+ * is why this file spends its effort on geometry and not on clocks.
+ *
+ * The ease profile peaks near 1.5x the mean step, so a mean held at 40px
+ * per frame peaks near 60, or 3.6px/ms. Arkose's biometrics tooling is
+ * reported to cap a human hand at about 5px/ms; that page was unreachable
+ * from here, so the number is a target with headroom rather than a line
+ * we are hugging.
+ */
+export const POINTER_MAX_STEP_PX = 40;
+
+/**
+ * Smallest displacement the path aims for between two consecutive points.
+ *
+ * Below this the points stop being a movement and start being a cluster
+ * in one place. Arkose's own collector discards a move under 5px
+ * (`MOUSE_THRESHOLD = 5` in its published sample), so points closer than
+ * that are not even recorded and only serve to make our own dispatch
+ * pattern denser than a hand's.
+ */
+const POINTER_MIN_STEP_PX = 8;
+
+/**
+ * Below this travel the pointer is treated as already there: no approach
+ * is drawn at all, only the settle.
+ *
+ * This is the second half of the bug measured on 2026-09-05. Clicking the
+ * same element twice asked Playwright to interpolate a zero-length line
+ * into twelve equal parts, and it duly emitted ELEVEN `mousemove` events
+ * at the identical coordinate. A hand that is already on the button does
+ * not re-approach it; it rests, with tremor.
+ */
+const POINTER_MIN_TRAVEL_PX = 4;
+
+/** Hard ceiling on points, so a viewport-crossing move still ends. */
+const POINTER_MAX_POINTS = 60;
+
+/** Bounds of the overshoot past the target before the correction back. */
+const OVERSHOOT_MIN_PX = 2;
+const OVERSHOOT_MAX_PX = 6;
+
+/**
+ * Largest sideways deviation, in pixels, of an intermediate point from
+ * the straight line joining start to target.
+ *
+ * This is tremor, not curvature: it is resampled per point rather than
+ * following a smooth function, so the macro shape stays the straight line
+ * the sources above argue for while the individual points stop sharing
+ * one exact y. The measured path had every intermediate point on
+ * `y = 159`, which is a ruler rather than an arm.
+ */
+const POINTER_TREMOR_PX = 2;
 
 const PointerSteps = z.number().int().positive().default(DEFAULT_POINTER_STEPS);
 
@@ -120,29 +263,77 @@ function settleOffset(): number {
 }
 
 /**
- * Approach the target's centre along an interpolated path, then settle on
- * it, so the browser emits a sequence of `mousemove` events instead of one
- * teleport before the action that follows.
+ * Where the pointer was left, per page.
  *
- * The approach delegates to Playwright's own `steps` interpolation rather
- * than hand-rolling the hops, and that choice is load-bearing: `move()`
- * interpolates from the pointer's LAST position, so the path crosses the
- * viewport from wherever the previous action left it. Hand-rolling the
- * loop can only start from a point this function already knows, which
- * means a path that begins inside the target element and travels a few
- * dozen pixels: more `mousemove` events than before, but a shape no hand
- * produces. See {@link DEFAULT_POINTER_STEPS} for why the line is straight
- * rather than curved.
+ * Playwright does not expose the cursor position, and the first version
+ * of the path used that as the reason to delegate interpolation to its
+ * `steps` option: you cannot hand-roll a path from a point you do not
+ * know. Remembering it removes the objection, and remembering is safe
+ * because nothing else in this process moves the mouse.
  *
- * The two settle hops go beyond the "interpolate the existing move and
- * nothing more" bound this change was originally scoped to, by operator
- * decision on 2026-09-03: a pointer that arrives at a centre pixel and
- * then holds perfectly still until mousedown is as distinctive as one that
- * teleported there.
+ * A `WeakMap` so a closed page's entry goes with it. The default is
+ * `0,0`, which is where Playwright's own cursor starts.
+ */
+const pointerPositions = new WeakMap<Page, { x: number; y: number }>();
+
+/** Dispatch one move and remember where it left the pointer. */
+async function movePointerTo(page: Page, x: number, y: number): Promise<void> {
+  await page.mouse.move(x, y);
+  pointerPositions.set(page, { x, y });
+}
+
+/**
+ * Smoothstep, the cheapest ease that is slow at both ends and fast in the
+ * middle. Applied to the interpolation parameter it turns equal time
+ * slices into unequal distances, which is the whole point: a hand
+ * accelerates away from rest and decelerates into the target, and the
+ * page reads that as displacement per frame.
+ */
+function easeInOut(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * How many points to draw for a given travel distance.
  *
- * No independent timeout: every hop is a fire-and-forget CDP dispatch, the
- * same primitive Playwright's own `move()` uses, so there is nothing here
- * to bound against the step's `remainingMs` budget.
+ * Two pressures, opposite ends. A long path divided into a fixed count
+ * teleports tens of pixels per frame, so the count has to grow with
+ * distance ({@link POINTER_MAX_STEP_PX}). A short hop divided into the
+ * same fixed count emits a dense cluster inside a few pixels, so the
+ * count has to shrink with it ({@link POINTER_MIN_STEP_PX}).
+ */
+function pointerPointCount(distance: number, requested: number): number {
+  const dense = Math.ceil(distance / POINTER_MAX_STEP_PX);
+  const sparse = Math.ceil(distance / POINTER_MIN_STEP_PX);
+
+  return Math.max(2, Math.min(POINTER_MAX_POINTS, Math.max(dense, Math.min(requested, sparse))));
+}
+
+/**
+ * Approach the target's centre, overshoot it, and pull back onto it, so
+ * the page sees a movement with a velocity profile instead of a ruler.
+ *
+ * Three properties, each answering something measured on 2026-09-05
+ * against a real page inside the production container:
+ *
+ *  - **Unequal steps.** `dx` was `[50,50,...]` on every frame. The points
+ *    are now placed along an ease, so the middle of the movement is
+ *    several times faster than its ends.
+ *  - **No cluster on one pixel.** Clicking the same element twice emitted
+ *    eleven moves at the identical coordinate, because a zero-length line
+ *    still got twelve equal parts. Under {@link POINTER_MIN_TRAVEL_PX} the
+ *    approach is skipped entirely.
+ *  - **Overshoot, then correct.** The hand lands a few pixels past the
+ *    target and pulls back, rather than stopping dead on the centre. The
+ *    settle hop that shipped in v0.6.6 already refused to hold perfectly
+ *    still; this makes the arrival itself imperfect too.
+ *
+ * Deliberately no sleeps. Chrome delivers `mousemove` on the frame
+ * boundary, so a sub-frame sleep changes nothing a page can see and a
+ * multi-frame one only makes the movement slower; see
+ * {@link POINTER_MAX_STEP_PX} for the measurement. That also keeps this
+ * function what it was: a run of fire-and-forget CDP dispatches with
+ * nothing to bound against the step's `remainingMs` budget.
  *
  * A `null` box means a detached or not-yet-rendered element. The move is
  * skipped rather than thrown: the locator action that follows has its own
@@ -161,10 +352,37 @@ async function movePointerToBoxCentre(
 
   const centreX = box.x + box.width / 2;
   const centreY = box.y + box.height / 2;
+  const from = pointerPositions.get(page) ?? { x: 0, y: 0 };
+  const dx = centreX - from.x;
+  const dy = centreY - from.y;
+  const distance = Math.hypot(dx, dy);
 
-  await page.mouse.move(centreX, centreY, { steps });
-  await page.mouse.move(centreX + settleOffset(), centreY + settleOffset());
-  await page.mouse.move(centreX, centreY);
+  if (distance >= POINTER_MIN_TRAVEL_PX) {
+    const points = pointerPointCount(distance, steps);
+    // Unit vector along the travel, and its perpendicular, so the
+    // overshoot runs past the target and the tremor runs across it.
+    const alongX = dx / distance;
+    const alongY = dy / distance;
+    const overshoot = OVERSHOOT_MIN_PX + Math.random() * (OVERSHOOT_MAX_PX - OVERSHOOT_MIN_PX);
+    const landingX = centreX + alongX * overshoot;
+    const landingY = centreY + alongY * overshoot;
+
+    for (let i = 1; i <= points; i++) {
+      const progress = easeInOut(i / points);
+      // The last point is the overshoot itself and carries no tremor;
+      // the correction below is what moves off it.
+      const tremor = i === points ? 0 : (Math.random() * 2 - 1) * POINTER_TREMOR_PX;
+
+      await movePointerTo(
+        page,
+        Math.round(from.x + (landingX - from.x) * progress - alongY * tremor),
+        Math.round(from.y + (landingY - from.y) * progress + alongX * tremor),
+      );
+    }
+  }
+
+  await movePointerTo(page, centreX + settleOffset(), centreY + settleOffset());
+  await movePointerTo(page, centreX, centreY);
 }
 
 export const click: StepExecutor = {
@@ -175,7 +393,7 @@ export const click: StepExecutor = {
       locator: LocatorSpec,
       button: z.enum(['left', 'right', 'middle']).default('left'),
       clickCount: z.number().int().positive().default(1),
-      delay: z.number().int().nonnegative().default(0),
+      delay: z.number().int().nonnegative().default(CLICK_HOLD_MEAN_MS),
       force: z.boolean().default(false),
       pointerSteps: PointerSteps,
       timeout: TimeoutMs.default(10_000),
@@ -197,7 +415,11 @@ export const click: StepExecutor = {
     await target.locator.click({
       button: c.button,
       clickCount: c.clickCount,
-      delay: c.delay,
+      // Playwright applies this between mousedown and mouseup, so it is
+      // the button hold. Sampled around the recipe's value rather than
+      // used as one, because a constant hold is its own signal; `0` stays
+      // an exact opt-out.
+      delay: sampleHoldMs(c.delay),
       force: c.force,
       timeout: target.remainingMs,
     });
@@ -213,7 +435,7 @@ export const dblclick: StepExecutor = {
     .object({
       locator: LocatorSpec,
       button: z.enum(['left', 'right', 'middle']).default('left'),
-      delay: z.number().int().nonnegative().default(0),
+      delay: z.number().int().nonnegative().default(CLICK_HOLD_MEAN_MS),
       force: z.boolean().default(false),
       pointerSteps: PointerSteps,
       timeout: TimeoutMs.default(10_000),
@@ -233,7 +455,7 @@ export const dblclick: StepExecutor = {
     await movePointerToBoxCentre(ctx.page, box, c.pointerSteps);
     await target.locator.dblclick({
       button: c.button,
-      delay: c.delay,
+      delay: sampleHoldMs(c.delay),
       force: c.force,
       timeout: target.remainingMs,
     });
@@ -358,8 +580,35 @@ function assertTypingFitsBudget(text: string, delay: number, remainingMs: number
  */
 async function typeWithCadence(page: Page, text: string, delay: number): Promise<void> {
   for (const char of text) {
-    await page.keyboard.type(char);
-    await new Promise((resolve) => setTimeout(resolve, sampleKeystrokeGap(delay)));
+    // `keyboard.type` rather than `keyboard.press`, one character at a
+    // time, and the choice is load-bearing: `type` falls back to
+    // `insertText` for a character the US layout does not carry
+    // (playwright-core `input.ts`, `usKeyboardLayout.has(char)`), while
+    // `press` throws on it. A Turkish handle typed through `press` would
+    // die on the first non-ASCII letter.
+    //
+    // The option is the HOLD, not the gap: `press` does `down`,
+    // `wait(delay)`, `up`, and `type` forwards its delay into `press` per
+    // character. v0.6.7 passed none of it and slept afterwards instead,
+    // which is how the hold ended up at 1 to 2ms.
+    const startedAt = Date.now();
+    await page.keyboard.type(char, { delay: sampleHoldMs(KEY_HOLD_MEAN_MS) });
+
+    // The gap is the keydown-to-keydown interval the recipes are budgeted
+    // against, and the hold sits INSIDE it, so what is left to sleep is
+    // the remainder. Adding the hold on top would stretch every stored
+    // recipe past the timeout its author measured against.
+    //
+    // Measured elapsed rather than the sampled hold, because the round
+    // trip costs more than the hold it carries: subtracting the sample
+    // left the real interval at ~285ms against a 240ms target, which ate
+    // enough of the 90s post budget (67s projected, 80s actual) to make a
+    // heavy draw a failed post rather than a slow one.
+    const remainder = sampleKeystrokeGap(delay) - (Date.now() - startedAt);
+
+    if (remainder > 0) {
+      await new Promise((resolve) => setTimeout(resolve, remainder));
+    }
   }
 }
 
@@ -425,7 +674,10 @@ export const press: StepExecutor = {
     .object({
       key: z.string().min(1),
       locator: LocatorSpec.optional(),
-      delay: z.number().int().nonnegative().default(0),
+      // The hold, per Playwright's own `press`. The two `press: Enter`
+      // steps in the X login recipe were the last key events left at a
+      // zero hold once the credentials moved to `type`.
+      delay: z.number().int().nonnegative().default(KEY_HOLD_MEAN_MS),
       timeout: TimeoutMs.default(10_000),
     })
     .strict(),
@@ -436,15 +688,16 @@ export const press: StepExecutor = {
       delay: number;
       timeout: number;
     };
+    const hold = sampleHoldMs(c.delay);
 
     if (c.locator !== undefined) {
       const target = await resolveLocator(ctx.page, c.locator, c.timeout);
-      await target.locator.press(c.key, { delay: c.delay, timeout: target.remainingMs });
+      await target.locator.press(c.key, { delay: hold, timeout: target.remainingMs });
 
       return { ok: true, output: { key: c.key, locatorIndex: target.index } };
     }
 
-    await ctx.page.keyboard.press(c.key, { delay: c.delay });
+    await ctx.page.keyboard.press(c.key, { delay: hold });
 
     return { ok: true, output: { key: c.key, locatorIndex: null } };
   },
