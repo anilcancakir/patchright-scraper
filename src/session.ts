@@ -24,9 +24,10 @@ import type { SessionState } from './steps/types.js';
  *
  * Safe to delete unconditionally. Chrome recreates all three on launch,
  * and nothing that constitutes a login lives in them: cookies, Local
- * State and the profile directories are untouched. Removing them is
- * also what makes the container stop path survivable, since nothing in
- * this system shuts Chrome down politely.
+ * State and the profile directories are untouched. {@see closeAllSessions}
+ * now shuts Chrome down politely on SIGTERM, which clears these the way
+ * Chrome intends, but the lives that end in SIGKILL still cannot, so
+ * this stays as the floor rather than the only defence.
  */
 export function clearSingletonGuards(profilePath: string): void {
   for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
@@ -98,6 +99,38 @@ function localeEnvironment(locale: string | undefined): Record<string, string> |
   };
 }
 
+/**
+ * Tell the next Chrome that the last one is gone, not crashed.
+ *
+ * Chromium writes `profile.exit_type` = "Crashed" at startup and flips
+ * it to "Normal" only during a clean shutdown (the pref is
+ * `kSessionExitType`, documented in chrome/common/pref_names.h as "Set
+ * to kPrefExitTypeCrashed on startup and one of kPrefExitTypeNormal or
+ * kPrefExitTypeSessionEnded during shutdown"). A life that ended in
+ * SIGKILL never gets to flip it, so the next launch opens on the
+ * "Restore pages?" bubble.
+ *
+ * That bubble is not cosmetic here. It renders over the top-right of
+ * the page, which is where X puts its own controls, and it is one more
+ * thing a recipe's locator can resolve against on a site that already
+ * renders every form twice.
+ *
+ * {@see closeAllSessions} is the half that stops the marker being
+ * written in the first place; this is the half that covers the lives no
+ * handler can reach, an OOM kill, a `docker kill`, a host reboot. Same
+ * reasoning as {@see clearSingletonGuards}: a fresh container is a
+ * fresh PID namespace, so anything found here belongs to a life that
+ * has already ended.
+ */
+function clearCrashMarker(prefs: Record<string, unknown>): void {
+  const profile = (prefs['profile'] as Record<string, unknown>) ?? {};
+
+  prefs['profile'] = {
+    ...profile,
+    exit_type: 'Normal',
+  };
+}
+
 function seedChromePreferences(profilePath: string): void {
   const defaultDir = join(profilePath, 'Default');
   const prefsPath = join(defaultDir, 'Preferences');
@@ -143,6 +176,7 @@ function seedChromePreferences(profilePath: string): void {
     ...translate,
     enabled: false,
   };
+  clearCrashMarker(prefs);
 
   try {
     writeFileSync(prefsPath, JSON.stringify(prefs), { encoding: 'utf-8' });
@@ -507,6 +541,54 @@ export async function destroySession(id: string): Promise<boolean> {
   }
 
   return true;
+}
+
+/**
+ * Close every live context before the process goes away.
+ *
+ * This is what lets Chrome shut down rather than be killed, and a
+ * Chrome that shuts down writes `profile.exit_type` = "Normal" into the
+ * profile. Without it the next container to mount that profile opens on
+ * the "Restore pages?" bubble, and on a dedicated account the profile
+ * IS the identity, so it is the same profile every time.
+ *
+ * The budget is the point. `containerStop` grants ten seconds before
+ * SIGKILL, so a context that will not close must not be allowed to
+ * spend them: waiting past the grace buys nothing (the kill lands
+ * anyway, the marker stays) and costs the sessions that would have
+ * closed cleanly behind it. Whatever finishes inside the budget is
+ * saved; whatever does not was going to be killed regardless.
+ *
+ * Resolves to the number of contexts that closed in time.
+ */
+export async function closeAllSessions(budgetMs: number): Promise<number> {
+  const live = [...sessions.entries()];
+
+  if (live.length === 0) {
+    return 0;
+  }
+
+  let closed = 0;
+
+  const closes = live.map(async ([id, session]) => {
+    session.state = 'closed';
+
+    try {
+      await session.context.close();
+      closed += 1;
+    } catch {
+      // A context already detached is already as closed as it gets.
+    } finally {
+      sessions.delete(id);
+    }
+  });
+
+  await Promise.race([
+    Promise.allSettled(closes),
+    new Promise((resolve) => setTimeout(resolve, budgetMs)),
+  ]);
+
+  return closed;
 }
 
 export function listSessions(): Array<{

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## v0.6.10 (2026-09-06)
+
+Shut Chrome down instead of walking away from it, so a profile stops
+telling the next launch it crashed.
+
+Chromium writes `profile.exit_type` = "Crashed" at startup and flips it
+to "Normal" only during a clean shutdown (`kSessionExitType`,
+chrome/common/pref_names.h). The SIGTERM handler closed the Fastify
+server and called `process.exit(0)`, so every live context was left to
+be killed with the container and nothing ever flipped the marker. The
+next container to mount that profile opened on the "Restore pages?"
+bubble.
+
+That bubble is not cosmetic. It renders over the top right of the page,
+which is where X puts its own controls, and it is one more thing a
+recipe's locator can resolve against on a site that already renders
+every form twice. On a dedicated account the profile is the identity
+and therefore always the same profile, so this happened on every stop,
+and it was visible in the live view of the signed-in account.
+
+Two halves, because they cover different lives. `closeAllSessions()`
+closes every context on SIGTERM, bounded to six seconds against
+`containerStop`'s ten-second grace: a context that will not close was
+going to be killed anyway and must not spend the budget of the ones
+behind it. `clearCrashMarker()` normalizes the pref before launch, for
+the lives no handler can reach, an OOM kill, a `docker kill`, a host
+reboot. Same reasoning as the singleton guards, which stay: a fresh
+container is a fresh PID namespace, so anything found there belongs to
+a life that has already ended.
+
 ## v0.6.7 (2026-09-04)
 
 Declare the language through the browser process environment, because
