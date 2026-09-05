@@ -25,9 +25,9 @@ import type { SessionState } from './steps/types.js';
  * Safe to delete unconditionally. Chrome recreates all three on launch,
  * and nothing that constitutes a login lives in them: cookies, Local
  * State and the profile directories are untouched. {@see closeAllSessions}
- * now shuts Chrome down politely on SIGTERM, which clears these the way
- * Chrome intends, but the lives that end in SIGKILL still cannot, so
- * this stays as the floor rather than the only defence.
+ * now closes the browser on SIGTERM, which lets Chrome release these
+ * itself, but the lives that end in SIGKILL still cannot, so this stays
+ * as the floor rather than the only defence.
  */
 export function clearSingletonGuards(profilePath: string): void {
   for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
@@ -115,10 +115,16 @@ function localeEnvironment(locale: string | undefined): Record<string, string> |
  * thing a recipe's locator can resolve against on a site that already
  * renders every form twice.
  *
- * {@see closeAllSessions} is the half that stops the marker being
- * written in the first place; this is the half that covers the lives no
- * handler can reach, an OOM kill, a `docker kill`, a host reboot. Same
- * reasoning as {@see clearSingletonGuards}: a fresh container is a
+ * This is the whole fix, not half of it. Closing the context politely
+ * turned out NOT to clear the marker: measured on prod 2026-09-06, a
+ * container stopped with {@see closeAllSessions} logged `closed: 1`,
+ * left no chrome process behind, and the profile it had just released
+ * still read `exit_type: "Crashed"`. Playwright's persistent-context
+ * close does not take the browser down the path that writes the pref,
+ * so the only reliable moment to declare a clean exit is before the
+ * next launch reads it.
+ *
+ * Same reasoning as {@see clearSingletonGuards}: a fresh container is a
  * fresh PID namespace, so anything found here belongs to a life that
  * has already ended.
  */
@@ -546,11 +552,17 @@ export async function destroySession(id: string): Promise<boolean> {
 /**
  * Close every live context before the process goes away.
  *
- * This is what lets Chrome shut down rather than be killed, and a
- * Chrome that shuts down writes `profile.exit_type` = "Normal" into the
- * profile. Without it the next container to mount that profile opens on
- * the "Restore pages?" bubble, and on a dedicated account the profile
- * IS the identity, so it is the same profile every time.
+ * This lets Chrome shut itself down rather than be killed with the
+ * container: it flushes what it was holding and releases its own
+ * singleton guards, instead of leaving both to the next launch to
+ * clean up.
+ *
+ * It does NOT clear the crash marker, which is what it was written to
+ * do. Measured on prod 2026-09-06: a stop logged `closed: 1`, left no
+ * chrome process behind, and the released profile still read
+ * `exit_type: "Crashed"`. Playwright's persistent-context close does
+ * not take the browser down the path that writes that pref, so
+ * {@see clearCrashMarker} carries the bubble on its own.
  *
  * The budget is the point. `containerStop` grants ten seconds before
  * SIGKILL, so a context that will not close must not be allowed to

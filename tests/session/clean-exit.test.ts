@@ -16,9 +16,13 @@ import { makePage } from '../steps/_helpers.js';
  * identity and therefore always the same profile, so it happened every
  * time.
  *
- * Two halves, tested separately because they cover different lives:
- * closing the contexts on SIGTERM stops the marker being written, and
- * clearing it at launch covers the kills no handler can reach.
+ * Clearing the marker at launch is what carries this. Closing the
+ * contexts on SIGTERM was written to stop the marker being written at
+ * all and does not: measured on prod 2026-09-06, a stop logged
+ * `closed: 1`, left no chrome process behind, and the released profile
+ * still read "Crashed". It stays for the smaller thing it does, which
+ * is letting Chrome flush and release its own guards rather than be
+ * killed mid-write, and is tested for that rather than for the pref.
  */
 const { launchPersistentContext } = vi.hoisted(() => ({
   launchPersistentContext: vi.fn(),
@@ -108,7 +112,7 @@ describe('the crash marker a killed Chrome leaves behind', () => {
 });
 
 describe('closeAllSessions', () => {
-  it('closes every live context so Chrome writes its own clean exit', async () => {
+  it('closes every live context so Chrome flushes instead of being killed', async () => {
     vi.resetModules();
     const { createSession, closeAllSessions, listSessions } = await import('../../src/session.js');
 
@@ -130,9 +134,9 @@ describe('closeAllSessions', () => {
 
   it('gives up on a context that will not close rather than spending the grace period', async () => {
     // `containerStop` grants ten seconds before SIGKILL. A context that
-    // hangs must not be allowed to spend them: the kill lands anyway
-    // and the marker stays, so waiting buys nothing and costs whatever
-    // would have closed behind it.
+    // hangs must not be allowed to spend them: the kill lands anyway, so
+    // waiting buys nothing and costs whatever would have closed behind
+    // it.
     vi.resetModules();
     const { createSession, closeAllSessions } = await import('../../src/session.js');
 

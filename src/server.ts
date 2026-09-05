@@ -38,13 +38,14 @@ async function main(): Promise<void> {
 
   // Shut the browsers down, do not just walk away from them.
   //
-  // This used to close Fastify and exit, which left every live Chrome
-  // to be killed with the container. A killed Chrome never clears its
-  // own `profile.exit_type` = "Crashed", so the next container to mount
-  // that profile opened on the "Restore pages?" bubble, over the top
-  // right of the page, where the site's own controls live. On a
-  // dedicated account the profile is the identity and therefore always
-  // the same profile, so it happened on every single stop.
+  // This used to close Fastify and exit, which left every live Chrome to
+  // be killed with the container: nothing flushed, and the profile's own
+  // singleton guards left for the next launch to clear.
+  //
+  // It does not fix the "Restore pages?" bubble, which is what it was
+  // written for. Measured on prod 2026-09-06, `closed: 1` and no chrome
+  // left, and the released profile still read exit_type "Crashed".
+  // clearCrashMarker() in session.ts carries that on its own.
   let shuttingDown = false;
 
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {

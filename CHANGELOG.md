@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+Correcting the v0.6.10 note below, which claimed more for
+`closeAllSessions()` than it earns. Measured live on 2026-09-06: a
+container stopped through it logged `closed: 1`, left no chrome process
+behind, and the profile it had just released still read
+`exit_type: "Crashed"`. Playwright's persistent-context close does not
+take the browser down the path that writes that pref, so the bubble is
+carried entirely by `clearCrashMarker()` at launch. Closing the contexts
+still earns its place, for the smaller thing it actually does: Chrome
+flushes and releases its own singleton guards instead of being killed
+mid-write.
+
+Verified end to end on prod at v0.6.10: the account's container came
+back on the new image, the keepalive succeeded (so the profile survived
+the recycle), and the live view shows the same signed-in timeline with
+no restore bubble over it.
+
 ## v0.6.10 (2026-09-06)
 
 Shut Chrome down instead of walking away from it, so a profile stops
