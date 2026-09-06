@@ -129,7 +129,7 @@ describe('scrollAndCollect', () => {
     const evaluate = vi.fn(async (_fn: unknown, arg: unknown) => {
       const payload = arg as { stepPx?: number; selector?: string };
 
-      // The scroll half of the loop carries stepPx and returns nothing.
+      // Only a named container still scrolls through the DOM.
       if (payload.stepPx !== undefined) {
         offset = Math.min(offset + windowSize, Math.max(0, total - windowSize));
         return undefined;
@@ -143,7 +143,12 @@ describe('scrollAndCollect', () => {
       return rows;
     });
 
-    return makePage({ evaluate: evaluate as never });
+    const wheel = vi.fn(async (_x: number, y: number) => {
+      offset = Math.min(offset + windowSize, Math.max(0, total - windowSize));
+      void y;
+    });
+
+    return makePage({ evaluate: evaluate as never, mouse: { wheel } as never });
   }
 
   it('merges every window into one deduped set', async () => {
@@ -305,6 +310,76 @@ describe('scrollAndCollect', () => {
     expect(passed.keyResolve).toBe(true);
   });
 
+  it('scrolls with a real wheel rather than a DOM call', async () => {
+    // `window.scrollBy` emits no `wheel` event and moves the whole
+    // distance in one frame, so a page watching input sees a document
+    // that scrolled with nobody scrolling it. `mouse.wheel` goes through
+    // CDP, so Chrome animates it and emits the intermediate frames.
+    const page = virtualizedPage(30, 4);
+    const { ctx } = makeCtx({ page });
+
+    await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      settleMs: 0,
+    });
+
+    expect((page.mouse.wheel as unknown as { mock: { calls: unknown[] } }).mock.calls.length)
+      .toBeGreaterThan(0);
+  });
+
+  it('drops rows missing a field the caller declared required', async () => {
+    // A field whose selector misses is written as null, and minRows
+    // counts rows rather than content, so a moved body selector returned
+    // a full count of rows that were all {"body": null} and satisfied
+    // the guard that exists to catch exactly that.
+    let offset = 0;
+    const evaluate = vi.fn(async (_fn: unknown, arg: unknown) => {
+      const payload = arg as { stepPx?: number };
+      if (payload.stepPx !== undefined) { offset += 1; return undefined; }
+
+      return [
+        { key: '/status/1', row: { body: 'real' } },
+        { key: '/status/2', row: { body: null } },
+      ];
+    });
+    const page = makePage({ evaluate: evaluate as never, mouse: { wheel: vi.fn() } as never });
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      requiredFields: ['body'],
+      settleMs: 0,
+    });
+
+    const rows = (result.output as { rows: Array<Record<string, string>> }).rows;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].body).toBe('real');
+  });
+
+  it('turns a wholly rotted field map into a loud failure', async () => {
+    const evaluate = vi.fn(async (_fn: unknown, arg: unknown) => {
+      const payload = arg as { stepPx?: number };
+      if (payload.stepPx !== undefined) { return undefined; }
+
+      return [{ key: '/status/1', row: { body: null } }];
+    });
+    const page = makePage({ evaluate: evaluate as never, mouse: { wheel: vi.fn() } as never });
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      requiredFields: ['body'],
+      minRows: 1,
+      settleMs: 0,
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
   it('never scrolls the same distance twice', async () => {
     // The uniform version was a signature: every pass moved exactly
     // stepPx and waited exactly settleMs, so a sweep over a timeline
@@ -321,9 +396,9 @@ describe('scrollAndCollect', () => {
       settleMs: 0,
     });
 
-    const deltas = (page.evaluate as unknown as { mock: { calls: unknown[][] } }).mock.calls
-      .map((call) => (call[1] as { stepPx?: number }).stepPx)
-      .filter((px): px is number => px !== undefined);
+    const deltas = (page.mouse.wheel as unknown as { mock: { calls: number[][] } }).mock.calls.map(
+      (call) => call[1],
+    );
 
     expect(deltas.length).toBeGreaterThan(2);
     expect(new Set(deltas).size).toBeGreaterThan(1);
@@ -343,9 +418,9 @@ describe('scrollAndCollect', () => {
       settleMs: 0,
     });
 
-    const deltas = (page.evaluate as unknown as { mock: { calls: unknown[][] } }).mock.calls
-      .map((call) => (call[1] as { stepPx?: number }).stepPx)
-      .filter((px): px is number => px !== undefined);
+    const deltas = (page.mouse.wheel as unknown as { mock: { calls: number[][] } }).mock.calls.map(
+      (call) => call[1],
+    );
 
     for (const delta of deltas) {
       expect(delta).toBeGreaterThanOrEqual(300);

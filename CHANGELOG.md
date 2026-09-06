@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## v0.6.13 (2026-09-06)
+
+Scroll with a real wheel, and let a rotted field map fail as loudly as a
+rotted key.
+
+`window.scrollBy` inside `page.evaluate` emits no `wheel` event at all
+and moves the whole distance in one frame. So a page watching input saw a
+document that scrolled with nobody scrolling it, and a per-frame
+displacement no hand produces, which is the tell this codebase already
+identified for pointer movement and then left in place on the step that
+scrolls. `page.mouse.wheel` goes through CDP, so Chrome runs its own
+smooth-scroll animation and emits the intermediate frames along with the
+event. A named container still goes through the DOM, because a wheel
+lands on whatever is under the pointer and nothing here knows where that
+container is on screen.
+
+This matters more than v0.6.12's jitter, which shaped a delta that was
+never dispatched as an event.
+
+`requiredFields` closes the hole `minRows` left one level down. A field
+whose selector misses is written as null, and `minRows` counts rows
+rather than content, so a moved body selector returned a full count of
+rows that were all `{"body": null}` and satisfied the guard written to
+catch exactly that. Naming a field drops the rows that lack it, which
+turns a moved selector back into an empty result and therefore into a
+`minRows` failure. Rows are dropped rather than failed on their own: a
+single card with no body is ordinary, a selector that moved takes every
+row with it.
+
 ## v0.6.12 (2026-09-06)
 
 Stop `scrollAndCollect` scrolling like a machine, and let it hand back a

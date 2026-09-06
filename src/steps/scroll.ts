@@ -195,6 +195,7 @@ export const scrollAndCollect: StepExecutor = {
       maxIterations: z.number().int().positive().default(20),
       maxRows: z.number().int().positive().default(500),
       minRows: z.number().int().nonnegative().default(0),
+      requiredFields: z.array(z.string().min(1)).default([]),
       settleMs: z.number().int().nonnegative().default(750),
       idleIterations: z.number().int().positive().default(2),
       stepPx: z.number().int().positive().default(1200),
@@ -246,6 +247,13 @@ export const scrollAndCollect: StepExecutor = {
    * still passes, because the articles are there. The run then reports
    * success with zero results and nothing anywhere says the recipe
    * rotted.
+   *
+   * `requiredFields` closes the same hole one level down. A field whose
+   * selector misses is written as null, so a moved body selector returned
+   * a full count of rows that were all `{"body": null}`: `minRows` counts
+   * rows, not content, and was satisfied. Naming a field here drops the
+   * rows that lack it, which turns a moved selector back into an empty
+   * result and therefore into a `minRows` failure.
    */
   async execute(ctx, config) {
     const c = config as {
@@ -262,6 +270,7 @@ export const scrollAndCollect: StepExecutor = {
       maxIterations: number;
       maxRows: number;
       minRows: number;
+      requiredFields: string[];
       settleMs: number;
       idleIterations: number;
       stepPx: number;
@@ -353,26 +362,41 @@ export const scrollAndCollect: StepExecutor = {
         break;
       }
 
-      await ctx.page.evaluate(
-        ({ container, stepPx }) => {
-          const target = container
-            ? (document.querySelector(container) as HTMLElement | null)
-            : null;
+      const delta = sampleScrollDelta(c.stepPx);
 
-          if (target) {
-            target.scrollBy({ top: stepPx });
-            return;
-          }
-
-          window.scrollBy({ top: stepPx });
-        },
-        { container: c.container ?? null, stepPx: sampleScrollDelta(c.stepPx) },
-      );
+      if (c.container) {
+        // A named container still goes through the DOM: a wheel lands on
+        // whatever is under the pointer, and nothing here knows where
+        // that container is on screen.
+        await ctx.page.evaluate(
+          ({ container, stepPx }) => {
+            const target = document.querySelector(container) as HTMLElement | null;
+            target?.scrollBy({ top: stepPx });
+          },
+          { container: c.container, stepPx: delta },
+        );
+      } else {
+        // A real wheel, not `window.scrollBy`. The DOM call emits no
+        // `wheel` event at all and moves the whole distance in one frame,
+        // so a page watching input sees a document that scrolled with
+        // nobody scrolling it, and per-frame displacement no hand can
+        // produce. `mouse.wheel` goes through CDP, so Chrome runs its own
+        // smooth-scroll animation and emits the intermediate frames along
+        // with the event itself.
+        await ctx.page.mouse.wheel(0, delta);
+      }
 
       await new Promise((resolve) => setTimeout(resolve, sampleKeystrokeGap(c.settleMs)));
     }
 
-    const rows = Array.from(collected.values()).slice(0, c.maxRows);
+    // Dropped, not failed. A single card that renders no body (a poll, a
+    // deleted quote) is ordinary; a selector that has moved takes every
+    // row with it and lands on `minRows` below, which is the loud half.
+    const usable = Array.from(collected.values()).filter((row) =>
+      c.requiredFields.every((name) => row[name] !== null && row[name] !== undefined && row[name] !== ''),
+    );
+
+    const rows = usable.slice(0, c.maxRows);
 
     if (rows.length < c.minRows) {
       return {
