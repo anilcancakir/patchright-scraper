@@ -283,6 +283,75 @@ describe('scrollAndCollect', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('asks the page to resolve the key when the caller wants a URL', async () => {
+    // The raw attribute is a path, and every action that consumes it
+    // takes an absolute URL, so a caller either gets this or learns to
+    // prepend a host. Off by default: the raw attribute is what every
+    // stored recipe already reads.
+    const page = virtualizedPage(2, 2);
+    const { ctx } = makeCtx({ page });
+
+    await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      keySelector: 'a[href*="/status/"]',
+      keyResolve: true,
+      settleMs: 0,
+    });
+
+    const passed = (page.evaluate as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][1] as { keyResolve: boolean };
+
+    expect(passed.keyResolve).toBe(true);
+  });
+
+  it('never scrolls the same distance twice', async () => {
+    // The uniform version was a signature: every pass moved exactly
+    // stepPx and waited exactly settleMs, so a sweep over a timeline
+    // produced a column of identical deltas at identical intervals. No
+    // hand does that, and this is the one step whose whole job is to
+    // look like someone reading.
+    const page = virtualizedPage(40, 4);
+    const { ctx } = makeCtx({ page });
+
+    await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      stepPx: 1200,
+      settleMs: 0,
+    });
+
+    const deltas = (page.evaluate as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => (call[1] as { stepPx?: number }).stepPx)
+      .filter((px): px is number => px !== undefined);
+
+    expect(deltas.length).toBeGreaterThan(2);
+    expect(new Set(deltas).size).toBeGreaterThan(1);
+  });
+
+  it('never draws a delta too small to make progress', async () => {
+    // A draw near zero wastes a pass and, on a virtualized list, can
+    // unmount nothing new and trip the idle counter early, which returns
+    // a short list that reads like a finished one.
+    const page = virtualizedPage(40, 4);
+    const { ctx } = makeCtx({ page });
+
+    await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      stepPx: 900,
+      settleMs: 0,
+    });
+
+    const deltas = (page.evaluate as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => (call[1] as { stepPx?: number }).stepPx)
+      .filter((px): px is number => px !== undefined);
+
+    for (const delta of deltas) {
+      expect(delta).toBeGreaterThanOrEqual(300);
+    }
+  });
+
   it('stops at maxRows and says it was not exhausted', async () => {
     const page = virtualizedPage(50, 5);
     const { ctx } = makeCtx({ page });

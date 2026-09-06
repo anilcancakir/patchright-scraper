@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { sampleKeystrokeGap } from './input.js';
 import type { StepExecutor } from './types.js';
 
 const TimeoutMs = z.number().int().positive().max(120_000);
@@ -141,6 +142,30 @@ export const scrollModal: StepExecutor = {
   },
 };
 
+/**
+ * One scroll delta, in pixels.
+ *
+ * The uniform version of this was a signature. Every pass moved exactly
+ * `stepPx` and waited exactly `settleMs`, so a sweep over a timeline
+ * produced a column of identical deltas at identical intervals: a shape
+ * no hand produces, on a site that reads pointer and wheel behaviour.
+ * It is the same tell this codebase already removed from typing, left in
+ * place on the one step whose whole job is to look like someone reading.
+ *
+ * Drawn from the same lognormal the keystroke gap uses. A wheel notch is
+ * quantised and a trackpad flick is not, so real deltas are neither
+ * constant nor normally distributed: they cluster near a comfortable
+ * scroll with a long tail for the occasional hard flick, which is what
+ * a right-skewed draw gives.
+ *
+ * Floored at a third of the nominal step. A draw small enough to move
+ * almost nothing would waste a pass and, on a virtualized list, could
+ * unmount nothing new and trip the idle counter early.
+ */
+function sampleScrollDelta(stepPx: number): number {
+  return Math.max(Math.round(stepPx / 3), Math.round(sampleKeystrokeGap(stepPx)));
+}
+
 export const scrollAndCollect: StepExecutor = {
   name: 'scrollAndCollect',
   description:
@@ -152,6 +177,7 @@ export const scrollAndCollect: StepExecutor = {
       keySelector: z.string().min(1).optional(),
       keyAttribute: z.string().min(1).default('href'),
       keyField: z.string().min(1).default('key'),
+      keyResolve: z.boolean().default(false),
       fields: z
         .record(
           z.string().min(1),
@@ -204,9 +230,14 @@ export const scrollAndCollect: StepExecutor = {
    * `keyField` returns the dedupe key instead of throwing it away. It is
    * already computed, and for every X recipe it is the post's own
    * permalink, so discarding it left the whole system unable to name a
-   * post it had just read. Note it is the raw attribute: on X that is
-   * `/user/status/123`, a path and not a URL, which is why the field is
-   * called `key` rather than `url`.
+   * post it had just read.
+   *
+   * `keyResolve` decides whether that value is the raw attribute
+   * (`/user/status/123`, a path) or the browser's own resolution of it
+   * (an absolute URL). Off by default, because the raw attribute is what
+   * every stored recipe already reads; on, a caller can hand the value
+   * straight back to an action that takes a URL instead of knowing to
+   * prepend a host.
    *
    * `minRows` exists because this step could not fail. A row whose key
    * resolves to null is skipped silently, so if the permalink markup ever
@@ -223,6 +254,7 @@ export const scrollAndCollect: StepExecutor = {
       keySelector?: string;
       keyAttribute: string;
       keyField: string;
+      keyResolve: boolean;
       fields: Record<string, { selector?: string; attr?: string }>;
       attrs: string[];
       includeText: boolean;
@@ -241,12 +273,20 @@ export const scrollAndCollect: StepExecutor = {
 
     for (; iterations < c.maxIterations; iterations += 1) {
       const batch = await ctx.page.evaluate(
-        ({ selector, keySelector, keyAttribute, fields, attrs, includeText }) => {
+        ({ selector, keySelector, keyAttribute, keyResolve, fields, attrs, includeText }) => {
           const rows: Array<{ key: string; row: Record<string, string | null> }> = [];
 
           for (const el of Array.from(document.querySelectorAll(selector))) {
             const keyEl = keySelector ? el.querySelector(keySelector) : el;
-            const key = keyEl?.getAttribute(keyAttribute) ?? null;
+
+            // `.href` on an anchor is the browser's own resolution of the
+            // attribute against the document base, so an `/a/status/1`
+            // becomes the absolute URL a caller can hand straight back to
+            // an action that takes one. The raw attribute stays the
+            // default: it is what every stored recipe already reads.
+            const resolvable =
+              keyResolve && keyAttribute === 'href' && keyEl instanceof HTMLAnchorElement;
+            const key = (resolvable ? keyEl.href : keyEl?.getAttribute(keyAttribute)) ?? null;
 
             if (key === null || key === '') {
               continue;
@@ -285,6 +325,7 @@ export const scrollAndCollect: StepExecutor = {
           selector: c.selector,
           keySelector: c.keySelector ?? null,
           keyAttribute: c.keyAttribute,
+          keyResolve: c.keyResolve,
           fields: c.fields,
           attrs: c.attrs,
           includeText: c.includeText,
@@ -325,10 +366,10 @@ export const scrollAndCollect: StepExecutor = {
 
           window.scrollBy({ top: stepPx });
         },
-        { container: c.container ?? null, stepPx: c.stepPx },
+        { container: c.container ?? null, stepPx: sampleScrollDelta(c.stepPx) },
       );
 
-      await new Promise((resolve) => setTimeout(resolve, c.settleMs));
+      await new Promise((resolve) => setTimeout(resolve, sampleKeystrokeGap(c.settleMs)));
     }
 
     const rows = Array.from(collected.values()).slice(0, c.maxRows);

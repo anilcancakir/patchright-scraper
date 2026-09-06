@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## v0.6.12 (2026-09-06)
+
+Stop `scrollAndCollect` scrolling like a machine, and let it hand back a
+URL rather than a path.
+
+Every pass moved exactly `stepPx` and waited exactly `settleMs`, so a
+sweep over a timeline produced a column of identical deltas at identical
+intervals. No hand does that, and this is the one step whose entire job
+is to look like someone reading a feed. Deltas are now drawn from the
+same lognormal the keystroke gap uses, which is the right shape rather
+than merely a random one: a wheel notch is quantised and a trackpad flick
+is not, so real deltas cluster near a comfortable scroll with a long tail
+for the occasional hard flick. Floored at a third of the nominal step,
+because a draw near zero wastes a pass and, on a virtualized list, can
+unmount nothing new and trip the idle counter into returning a short list
+that reads like a finished one. The settle delay is drawn the same way.
+
+This is the tell this codebase already removed from typing, left in place
+on the step that most needed it.
+
+`keyResolve` decides whether the returned key is the raw attribute
+(`/user/status/123`) or the browser's own resolution of it into an
+absolute URL. Off by default, so every stored recipe keeps reading what
+it reads today. On, a caller can hand the value straight back to an
+action that takes a URL instead of learning to prepend a host, which is
+the loop v0.6.11 opened and stopped one step short of closing.
+
 ## v0.6.11 (2026-09-06)
 
 Make `scrollAndCollect` return data instead of a screenshot in text form,
