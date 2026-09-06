@@ -166,6 +166,23 @@ function sampleScrollDelta(stepPx: number): number {
   return Math.max(Math.round(stepPx / 3), Math.round(sampleKeystrokeGap(stepPx)));
 }
 
+/**
+ * A small, plausible resting place for the pointer over a feed.
+ *
+ * Absolute rather than relative, because nothing here tracks where the
+ * pointer is and the hover step in front of the collector has already
+ * put it over the column. Drawn inside the middle of a 1920x1080
+ * viewport: far enough from the edges to be over content on any of the
+ * layouts these recipes read, and varied enough that twenty wheel events
+ * do not share one coordinate.
+ */
+function pointerDrift(): { x: number; y: number } {
+  return {
+    x: 700 + Math.round(Math.random() * 420),
+    y: 380 + Math.round(Math.random() * 300),
+  };
+}
+
 export const scrollAndCollect: StepExecutor = {
   name: 'scrollAndCollect',
   description:
@@ -383,6 +400,15 @@ export const scrollAndCollect: StepExecutor = {
         // produce. `mouse.wheel` goes through CDP, so Chrome runs its own
         // smooth-scroll animation and emits the intermediate frames along
         // with the event itself.
+        //
+        // Nudge the pointer first. A wheel dispatches wherever the
+        // pointer already is, and nothing in this loop moved it, so a
+        // 25-row read emitted twenty wheel events at one identical
+        // clientX/clientY over half a minute. A hand resting on a
+        // trackpad drifts; a fixed coordinate through twenty events is
+        // the same uniformity tell as the fixed delta was.
+        const drift = pointerDrift();
+        await ctx.page.mouse.move(drift.x, drift.y);
         await ctx.page.mouse.wheel(0, delta);
       }
 

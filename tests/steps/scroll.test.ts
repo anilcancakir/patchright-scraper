@@ -143,12 +143,13 @@ describe('scrollAndCollect', () => {
       return rows;
     });
 
+    const move = vi.fn(async () => undefined);
     const wheel = vi.fn(async (_x: number, y: number) => {
       offset = Math.min(offset + windowSize, Math.max(0, total - windowSize));
       void y;
     });
 
-    return makePage({ evaluate: evaluate as never, mouse: { wheel } as never });
+    return makePage({ evaluate: evaluate as never, mouse: { wheel, move } as never });
   }
 
   it('merges every window into one deduped set', async () => {
@@ -310,6 +311,28 @@ describe('scrollAndCollect', () => {
     expect(passed.keyResolve).toBe(true);
   });
 
+  it('does not fire twenty wheel events at one coordinate', async () => {
+    // A wheel dispatches wherever the pointer already is, and nothing in
+    // the loop moved it, so a long read emitted every wheel at one
+    // identical clientX/clientY. A hand on a trackpad drifts; a fixed
+    // coordinate through twenty events is the same uniformity tell the
+    // fixed delta was.
+    const page = virtualizedPage(40, 4);
+    const { ctx } = makeCtx({ page });
+
+    await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      settleMs: 0,
+    });
+
+    const moves = (page.mouse.move as unknown as { mock: { calls: number[][] } }).mock.calls;
+    const wheels = (page.mouse.wheel as unknown as { mock: { calls: unknown[] } }).mock.calls;
+
+    expect(moves.length).toBe(wheels.length);
+    expect(new Set(moves.map(([x, y]) => `${x},${y}`)).size).toBeGreaterThan(1);
+  });
+
   it('scrolls with a real wheel rather than a DOM call', async () => {
     // `window.scrollBy` emits no `wheel` event and moves the whole
     // distance in one frame, so a page watching input sees a document
@@ -343,7 +366,7 @@ describe('scrollAndCollect', () => {
         { key: '/status/2', row: { body: null } },
       ];
     });
-    const page = makePage({ evaluate: evaluate as never, mouse: { wheel: vi.fn() } as never });
+    const page = makePage({ evaluate: evaluate as never, mouse: { wheel: vi.fn(), move: vi.fn() } as never });
     const { ctx } = makeCtx({ page });
 
     const result = await runStep(scrollAndCollect, ctx, {
@@ -366,7 +389,7 @@ describe('scrollAndCollect', () => {
 
       return [{ key: '/status/1', row: { body: null } }];
     });
-    const page = makePage({ evaluate: evaluate as never, mouse: { wheel: vi.fn() } as never });
+    const page = makePage({ evaluate: evaluate as never, mouse: { wheel: vi.fn(), move: vi.fn() } as never });
     const { ctx } = makeCtx({ page });
 
     const result = await runStep(scrollAndCollect, ctx, {

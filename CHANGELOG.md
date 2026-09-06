@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v0.6.15 (2026-09-06)
+
+Move the pointer before each wheel.
+
+`mouse.wheel` dispatches wherever the pointer already is, and nothing in
+the collector loop moved it, so a 25-row read emitted twenty wheel
+events at one identical `clientX`/`clientY` over half a minute. A hand
+resting on a trackpad drifts; a fixed coordinate through twenty events
+is the same uniformity tell the fixed delta was before v0.6.12, left
+behind on the other half of the same gesture.
+
 ## v0.6.14 (2026-09-06)
 
 Give `waitForTimeout` a human-shaped draw, so a recipe can dwell instead
