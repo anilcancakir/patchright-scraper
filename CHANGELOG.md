@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v0.6.14 (2026-09-06)
+
+Give `waitForTimeout` a human-shaped draw, so a recipe can dwell instead
+of pausing.
+
+A read that opens a page, extracts and navigates away in four seconds
+emits no idle time at all, which is a louder signal than any shape of
+the events it does emit. The fix is a pause, and a pause of exactly the
+same length on every run just replaces "no idle time" with "an idle time
+nobody has twice". `jitter` draws from the same lognormal as the
+keystroke gap: right-skewed, so most reads land near the nominal and the
+occasional one runs long, which is the shape attention has.
+
+Off by default, and the step reports what it actually waited rather than
+what it was asked for, because the run row is the only place an operator
+can see that a dwell happened at all.
+
 ## v0.6.13 (2026-09-06)
 
 Scroll with a real wheel, and let a rotted field map fail as loudly as a

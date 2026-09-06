@@ -8,6 +8,7 @@ import {
 
 type Candidates = LocatorCandidate[];
 import type { StepExecutor } from './types.js';
+import { sampleKeystrokeGap } from './input.js';
 
 const TimeoutMs = z.number().int().positive().max(120_000);
 
@@ -72,17 +73,34 @@ export const waitForLoadState: StepExecutor = {
 
 export const waitForTimeout: StepExecutor = {
   name: 'waitForTimeout',
-  description: 'Block the scenario for a fixed number of milliseconds.',
+  description:
+    'Block the scenario, either for an exact number of milliseconds or for a human-shaped draw around it.',
   schema: z
     .object({
       ms: z.number().int().nonnegative(),
+      jitter: z.boolean().default(false),
     })
     .strict(),
+  /**
+   * `jitter` is for a dwell rather than a deadline.
+   *
+   * A recipe that pauses to look like someone reading, and pauses for
+   * exactly the same 9000ms on every run, has replaced "no idle time at
+   * all" with "an idle time nobody has twice". The draw comes from the
+   * same lognormal as the keystroke gap: right-skewed, so most reads are
+   * near the nominal and the occasional one is much longer, which is the
+   * shape attention actually has.
+   *
+   * Off by default. A wait used to let a fixed animation finish wants the
+   * number it was given, and every stored recipe was written against one.
+   */
   async execute(_ctx, config) {
-    const c = config as { ms: number };
-    await new Promise((resolve) => setTimeout(resolve, c.ms));
+    const c = config as { ms: number; jitter: boolean };
+    const waitedMs = c.jitter && c.ms > 0 ? sampleKeystrokeGap(c.ms) : c.ms;
 
-    return { ok: true, output: { waitedMs: c.ms } };
+    await new Promise((resolve) => setTimeout(resolve, waitedMs));
+
+    return { ok: true, output: { waitedMs } };
   },
 };
 
