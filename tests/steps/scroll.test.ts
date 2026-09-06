@@ -179,6 +179,110 @@ describe('scrollAndCollect', () => {
     expect(new Set(rows.map((r) => r.text)).size).toBe(rows.length);
   });
 
+  it('hands back the dedupe key, because it is the only name a post has', async () => {
+    // The key is the post's own permalink and the step already computes
+    // it. Discarding it left nothing in the system able to address a post
+    // it had just read: `reply` takes a status URL and no action could
+    // produce one.
+    const page = virtualizedPage(3, 3);
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      keySelector: 'a[href*="/status/"]',
+      settleMs: 0,
+    });
+
+    const rows = (result.output as { rows: Array<Record<string, string>> }).rows;
+
+    expect(rows[0].key).toBe('/status/0');
+    expect(rows[2].key).toBe('/status/2');
+  });
+
+  it('lets the caller name the key field', async () => {
+    const page = virtualizedPage(2, 2);
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      keyField: 'permalink',
+      settleMs: 0,
+    });
+
+    const rows = (result.output as { rows: Array<Record<string, string>> }).rows;
+
+    expect(rows[0].permalink).toBe('/status/0');
+    expect(rows[0].key).toBeUndefined();
+  });
+
+  it('carries a fields map through the schema and into the page', async () => {
+    // The extraction itself runs inside page.evaluate and is out of reach
+    // from here; what this pins is that the config survives the schema and
+    // arrives, which is where a strict() object silently rejects a new key.
+    const page = virtualizedPage(2, 2);
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      fields: {
+        body: { selector: '[data-testid="tweetText"]' },
+        permalink: { selector: 'a[href*="/status/"]', attr: 'href' },
+      },
+      includeText: false,
+      settleMs: 0,
+    });
+
+    expect(result.ok).toBe(true);
+
+    const passed = (page.evaluate as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][1] as {
+      fields: Record<string, { selector?: string; attr?: string }>;
+      includeText: boolean;
+    };
+
+    expect(passed.fields.permalink).toEqual({ selector: 'a[href*="/status/"]', attr: 'href' });
+    expect(passed.includeText).toBe(false);
+  });
+
+  it('fails when it collected fewer rows than the caller requires', async () => {
+    // This step could not fail. A row whose key does not resolve is
+    // skipped, so a moved permalink silently empties every row, the idle
+    // counter trips, and the run reports success with zero results while
+    // the waitForSelector in front still passes. That is the shape of a
+    // rotted recipe nobody notices.
+    const page = virtualizedPage(2, 2);
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      keySelector: 'a[href*="/status/"]',
+      minRows: 5,
+      settleMs: 0,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('collected 2 rows of a required 5');
+    expect(result.error).toContain('a[href*="/status/"]');
+  });
+
+  it('leaves a collector with no floor alone', async () => {
+    // minRows defaults to 0, so every stored recipe keeps its behaviour.
+    const page = virtualizedPage(0, 3);
+    const { ctx } = makeCtx({ page });
+
+    const result = await runStep(scrollAndCollect, ctx, {
+      name: 'tweets',
+      selector: 'article',
+      settleMs: 0,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it('stops at maxRows and says it was not exhausted', async () => {
     const page = virtualizedPage(50, 5);
     const { ctx } = makeCtx({ page });

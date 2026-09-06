@@ -2,21 +2,36 @@
 
 ## Unreleased
 
-Correcting the v0.6.10 note below, which claimed more for
-`closeAllSessions()` than it earns. Measured live on 2026-09-06: a
-container stopped through it logged `closed: 1`, left no chrome process
-behind, and the profile it had just released still read
-`exit_type: "Crashed"`. Playwright's persistent-context close does not
-take the browser down the path that writes that pref, so the bubble is
-carried entirely by `clearCrashMarker()` at launch. Closing the contexts
-still earns its place, for the smaller thing it actually does: Chrome
-flushes and releases its own singleton guards instead of being killed
-mid-write.
+## v0.6.11 (2026-09-06)
 
-Verified end to end on prod at v0.6.10: the account's container came
-back on the new image, the keepalive succeeded (so the profile survived
-the recycle), and the live view shows the same signed-in timeline with
-no restore bubble over it.
+Make `scrollAndCollect` return data instead of a screenshot in text form,
+and let it fail.
+
+Three changes, one primitive. `fields` takes a map of output name to
+`{ selector?, attr? }`: omit `selector` to read the row itself, omit
+`attr` to read innerText. Before this the only text available was the
+row's own innerText, which on an X card is the author, the handle, "14m",
+"Replying to", the body and the engagement counts run together in one
+string no caller can take apart. One primitive rather than two, because
+an author's name is text and a permalink is an attribute of a descendant
+and both are wanted from the same row.
+
+`keyField` returns the dedupe key rather than discarding it. The step
+already computed it, and on every X recipe it is the post's own
+permalink, so throwing it away left the whole system unable to name a
+post it had just read: `reply` takes a status URL and no action could
+produce one. It is the raw attribute, a path rather than a URL, which is
+why the field is `key` and not `url`.
+
+`minRows` exists because this step could not fail. A row whose key does
+not resolve is skipped silently, so if the permalink markup ever moves,
+every row is skipped, the idle counter trips, and the step returns an
+empty list with `ok: true` while the `waitForSelector` in front still
+passes. The run then reports success with zero results and nothing says
+the recipe rotted. Defaults to 0, so every stored recipe keeps its
+behaviour until it opts in.
+
+Found while live-testing all eight X actions against a real account.
 
 ## v0.6.10 (2026-09-06)
 
@@ -47,6 +62,22 @@ the lives no handler can reach, an OOM kill, a `docker kill`, a host
 reboot. Same reasoning as the singleton guards, which stay: a fresh
 container is a fresh PID namespace, so anything found there belongs to
 a life that has already ended.
+
+**Corrected 2026-09-06.** The two halves above are not equal: this
+entry claimed more for `closeAllSessions()` than it earns. Measured live on 2026-09-06: a
+container stopped through it logged `closed: 1`, left no chrome process
+behind, and the profile it had just released still read
+`exit_type: "Crashed"`. Playwright's persistent-context close does not
+take the browser down the path that writes that pref, so the bubble is
+carried entirely by `clearCrashMarker()` at launch. Closing the contexts
+still earns its place, for the smaller thing it actually does: Chrome
+flushes and releases its own singleton guards instead of being killed
+mid-write.
+
+Verified end to end on prod at v0.6.10: the account's container came
+back on the new image, the keepalive succeeded (so the profile survived
+the recycle), and the live view shows the same signed-in timeline with
+no restore bubble over it.
 
 ## v0.6.7 (2026-09-04)
 

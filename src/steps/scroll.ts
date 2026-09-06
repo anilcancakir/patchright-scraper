@@ -151,11 +151,24 @@ export const scrollAndCollect: StepExecutor = {
       selector: z.string().min(1),
       keySelector: z.string().min(1).optional(),
       keyAttribute: z.string().min(1).default('href'),
+      keyField: z.string().min(1).default('key'),
+      fields: z
+        .record(
+          z.string().min(1),
+          z
+            .object({
+              selector: z.string().min(1).optional(),
+              attr: z.string().min(1).optional(),
+            })
+            .strict(),
+        )
+        .default({}),
       attrs: z.array(z.string()).default([]),
       includeText: z.boolean().default(true),
       container: z.string().min(1).optional(),
       maxIterations: z.number().int().positive().default(20),
       maxRows: z.number().int().positive().default(500),
+      minRows: z.number().int().nonnegative().default(0),
       settleMs: z.number().int().nonnegative().default(750),
       idleIterations: z.number().int().positive().default(2),
       stepPx: z.number().int().positive().default(1200),
@@ -177,6 +190,31 @@ export const scrollAndCollect: StepExecutor = {
    * key, not a scroll-height plateau. A virtualized container keeps its
    * scrollHeight roughly constant by design (spacer divs stand in for
    * the unmounted rows), so height is not a signal about progress here.
+   *
+   * `fields` is how a row becomes data rather than a screenshot in text
+   * form. Without it the only text available is the row's own innerText,
+   * which on an X card is author, handle, "14m", "Replying to", the body
+   * and the engagement counts run together in one string that no caller
+   * can take apart. Each entry names where to read from
+   * (`selector`, omitted for the row itself) and what to read
+   * (`attr`, omitted for innerText), which is one primitive rather than
+   * two: an author's name is text, a permalink is an attribute of a
+   * descendant, and both are wanted from the same row.
+   *
+   * `keyField` returns the dedupe key instead of throwing it away. It is
+   * already computed, and for every X recipe it is the post's own
+   * permalink, so discarding it left the whole system unable to name a
+   * post it had just read. Note it is the raw attribute: on X that is
+   * `/user/status/123`, a path and not a URL, which is why the field is
+   * called `key` rather than `url`.
+   *
+   * `minRows` exists because this step could not fail. A row whose key
+   * resolves to null is skipped silently, so if the permalink markup ever
+   * moves, every row is skipped, the idle counter trips and the step
+   * returns an empty list with `ok: true`. The `waitForSelector` in front
+   * still passes, because the articles are there. The run then reports
+   * success with zero results and nothing anywhere says the recipe
+   * rotted.
    */
   async execute(ctx, config) {
     const c = config as {
@@ -184,11 +222,14 @@ export const scrollAndCollect: StepExecutor = {
       selector: string;
       keySelector?: string;
       keyAttribute: string;
+      keyField: string;
+      fields: Record<string, { selector?: string; attr?: string }>;
       attrs: string[];
       includeText: boolean;
       container?: string;
       maxIterations: number;
       maxRows: number;
+      minRows: number;
       settleMs: number;
       idleIterations: number;
       stepPx: number;
@@ -200,7 +241,7 @@ export const scrollAndCollect: StepExecutor = {
 
     for (; iterations < c.maxIterations; iterations += 1) {
       const batch = await ctx.page.evaluate(
-        ({ selector, keySelector, keyAttribute, attrs, includeText }) => {
+        ({ selector, keySelector, keyAttribute, fields, attrs, includeText }) => {
           const rows: Array<{ key: string; row: Record<string, string | null> }> = [];
 
           for (const el of Array.from(document.querySelectorAll(selector))) {
@@ -219,6 +260,22 @@ export const scrollAndCollect: StepExecutor = {
               row.text = (el as HTMLElement).innerText ?? null;
             }
 
+            // `querySelector` has no strict mode and returns the first
+            // match, which is what makes this safe on a site that renders
+            // every layout twice: the second copy is simply not read.
+            for (const [name, spec] of Object.entries(fields)) {
+              const target = spec.selector ? el.querySelector(spec.selector) : el;
+
+              if (target === null) {
+                row[name] = null;
+                continue;
+              }
+
+              row[name] = spec.attr
+                ? target.getAttribute(spec.attr)
+                : ((target as HTMLElement).innerText ?? null);
+            }
+
             rows.push({ key, row });
           }
 
@@ -228,6 +285,7 @@ export const scrollAndCollect: StepExecutor = {
           selector: c.selector,
           keySelector: c.keySelector ?? null,
           keyAttribute: c.keyAttribute,
+          fields: c.fields,
           attrs: c.attrs,
           includeText: c.includeText,
         },
@@ -237,7 +295,10 @@ export const scrollAndCollect: StepExecutor = {
 
       for (const { key, row } of batch) {
         if (!collected.has(key)) {
-          collected.set(key, row);
+          // Stamped here rather than in the page: the key is already
+          // known on this side, so sending it in and reading it back out
+          // would be a round trip for a value we are holding.
+          collected.set(key, { ...row, [c.keyField]: key });
         }
       }
 
@@ -271,6 +332,18 @@ export const scrollAndCollect: StepExecutor = {
     }
 
     const rows = Array.from(collected.values()).slice(0, c.maxRows);
+
+    if (rows.length < c.minRows) {
+      return {
+        ok: false,
+        error:
+          `scrollAndCollect: collected ${rows.length} rows of a required ${c.minRows} for `
+          + `"${c.name}". ${iterations} passes over \`${c.selector}\`` +
+          (c.keySelector ? `, keyed on \`${c.keySelector}\`@${c.keyAttribute}` : '') +
+          '. A row whose key does not resolve is skipped, so this is what a moved permalink '
+          + 'looks like from here rather than an empty page.',
+      };
+    }
 
     return {
       ok: true,
