@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## v0.6.16 (2026-09-07)
+
+Close the caret's token before `composeThread` clicks anything.
+
+A composer that offers completions mounts its typeahead while the caret
+sits inside a `#hashtag` or an `@mention`. On x.com that container
+renders nothing and is an empty inset-0 div across the whole dialog, so
+the add control stays visible and enabled and every click on it is
+swallowed.
+
+Measured on production 2026-09-07 with a two-part thread whose first part
+ended in `#FlutterDev`: `locator.click` on `[data-testid="addButton"]`
+retried for its full 30s with "element is visible, enabled and stable"
+followed by "subtree intercepts pointer events", twice, ten seconds apart
+in total duration. No part was ever posted, so the failure was loud
+rather than a half thread, but a thread carrying a tag on any part could
+not be composed at all.
+
+The step now presses Space after every part, including the last: a
+trailing space is the smallest thing that ends the token, the sites this
+drives trim it on submit, and the last part is the one a publish click
+has to get past. `Escape` is not usable, because with no popup open x.com
+binds it to closing the composer.
+
 ## v0.6.15 (2026-09-06)
 
 Move the pointer before each wheel.

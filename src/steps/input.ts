@@ -1034,10 +1034,30 @@ export const composeThread: StepExecutor = {
         // had before this key existed. Commits the part the way an IME
         // does, with no key events at all.
         await ctx.page.keyboard.insertText(part);
-        continue;
+      } else {
+        await typeWithCadence(ctx.page, part, c.delay);
       }
 
-      await typeWithCadence(ctx.page, part, c.delay);
+      // Close whatever token the caret ended in, before the next pass
+      // clicks anything.
+      //
+      // A composer that offers completions mounts its typeahead while
+      // the caret sits inside a `#hashtag` or an `@mention`. On x.com
+      // that container renders nothing and is an empty inset-0 div over
+      // the whole dialog, so the add control stays visible and enabled
+      // and every click on it is swallowed. Measured on production
+      // 2026-09-07 with a two-part thread whose first part ended in
+      // `#FlutterDev`: `locator.click` on `[data-testid="addButton"]`
+      // retried for its full 30s with "element is visible, enabled and
+      // stable" followed by "subtree intercepts pointer events", twice,
+      // deterministically, and no part was ever posted.
+      //
+      // A trailing space is the smallest thing that ends the token, and
+      // the sites this drives trim it on submit. It goes after EVERY
+      // part rather than only between them: the last part is the one the
+      // publish click has to get past, and a caller that submits through
+      // some other control gets the same protection.
+      await ctx.page.keyboard.press('Space');
     }
 
     return { ok: true, output: { parts: c.parts.length } };

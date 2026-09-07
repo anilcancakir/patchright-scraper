@@ -291,6 +291,14 @@ describe('input primitives (Playwright shape)', () => {
   it('composeThread submits nothing', async () => {
     // The recipe owns the click that publishes, so a composed thread can
     // still be inspected or abandoned.
+    //
+    // Asserted against the keys that would SUBMIT rather than against
+    // `press` having been called at all. The step does press one key now,
+    // a Space that closes any `#hashtag` the caret ended inside, because
+    // the typeahead that token opens is an invisible layer that swallows
+    // the next click. A blanket "pressed nothing" would have made this
+    // test refuse that fix while proving nothing extra: what matters is
+    // that the thread is not sent, not that the keyboard is untouched.
     const locator = makeLocator();
     (locator as unknown as { nth: unknown }).nth = vi.fn(() => locator);
     const page = makePage({ locator: vi.fn(() => locator) as never });
@@ -303,6 +311,11 @@ describe('input primitives (Playwright shape)', () => {
       timeout: 5_000,
     });
 
-    expect(page.keyboard.press).not.toHaveBeenCalled();
+    const pressed = page.keyboard.press.mock.calls.map((call) => call[0]);
+
+    expect(pressed).not.toContain('Enter');
+    expect(pressed).not.toContain('Control+Enter');
+    expect(pressed).not.toContain('Meta+Enter');
+    expect(locator.click).toHaveBeenCalledTimes(1);
   });
 });
