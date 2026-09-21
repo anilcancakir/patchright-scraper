@@ -46,6 +46,7 @@ function makeBrowserContext(): Record<string, unknown> {
     pages: () => [page],
     newPage: async () => page,
     route: vi.fn(async () => undefined),
+    on: vi.fn(),
     close: vi.fn(async () => undefined),
   };
 }

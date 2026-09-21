@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## v0.6.17 (2026-09-21)
+
+Keep chrome's shared memory off the host disk, and stop calling a dead
+browser active.
+
+A browser died on 2026-09-21 at the second the Docker host's disk filled.
+Playwright launches chrome with `--disable-dev-shm-usage`, which puts every
+shared-memory region in /tmp: on the container's writable layer, so on the
+host disk. Reproduced by filling a 200 MB /tmp in a throwaway container:
+the first navigation afterwards answered "Target page, context or browser
+has been closed". The flag is now ignored, so chrome uses the 1 GiB
+/dev/shm every container is created with.
+
+The session then kept answering `active` over the dead browser, and the
+caller reused it six times. A context that closes now marks its session
+`closed`.
+
+`expect` polled through a dead browser the way it polls through a locator
+that is not there yet, spent its whole timeout, and answered "timed out"
+with a 200. It now rethrows a browser-closed error, so the step fails with
+it at once.
+
+Chrome's own stderr reaches the container log (`DEBUG=pw:browser`): the
+crash dump from 2026-09-21 was lost to the full disk, and the next one
+should at least leave its last words. Pair this with a capped container
+log; Kodizm sets `max-size` on every container it creates.
+
 ## v0.6.16 (2026-09-07)
 
 Close the caret's token before `composeThread` clicks anything.

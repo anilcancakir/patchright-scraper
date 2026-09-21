@@ -92,7 +92,23 @@ async function runPageAssertion(
   const expected = typeof value === 'string' ? value : '';
 
   while (Date.now() < deadline) {
-    const actual = assertion === 'toHaveURL' ? page.url() : await page.title();
+    // `page.url()` answers from the client side and keeps answering over a
+    // dead browser, so toHaveURL would poll its whole timeout where
+    // toHaveTitle throws on the first call. Both end the same way now.
+    let actual: string;
+
+    try {
+      actual = assertion === 'toHaveURL' ? page.url() : await page.title();
+    } catch (error) {
+      if (isBrowserGone(error)) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      continue;
+    }
+
     const matched = regex ? new RegExp(expected).test(actual) : actual === expected;
 
     if (matched) {
@@ -122,8 +138,14 @@ async function runLocatorAssertion(
       if (passed) {
         return { ok: true, output: { assertion } };
       }
-    } catch {
-      // Locator may not yet be present; keep polling until deadline.
+    } catch (error) {
+      // A locator not there yet throws too, and that one is worth polling
+      // through. A browser that is gone is not: swallowed, it spent the
+      // whole timeout and answered "timed out" with a 200, which a caller
+      // cannot tell from a disabled button.
+      if (isBrowserGone(error)) {
+        throw error;
+      }
     }
 
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -163,4 +185,14 @@ async function checkAssertion(
     case 'toHaveCount':
       return (await locator.count()) === Number(value ?? 0);
   }
+}
+
+/**
+ * Whether an error means the page, its context or the whole browser is gone.
+ *
+ * Matched on playwright's own sentence, which is also what the caller keys
+ * its browser-lost handling on.
+ */
+function isBrowserGone(error: unknown): boolean {
+  return error instanceof Error && /Target page, context or browser has been closed/.test(error.message);
 }

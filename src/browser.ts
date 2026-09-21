@@ -14,6 +14,8 @@ export async function oneShotScrape(req: ScrapeRequest): Promise<ScrapeResponse>
     userAgent: req.userAgent,
     locale: req.locale,
     viewport: req.viewport ?? null,
+    // Shared memory on /dev/shm, not /tmp on the host disk; see session.ts.
+    ignoreDefaultArgs: ['--disable-dev-shm-usage'],
   });
 
   try {
@@ -99,7 +101,12 @@ export async function ensureBrowser(): Promise<Browser> {
     return cachedBrowser;
   }
 
-  cachedBrowser = await chromium.launch({ channel: 'chrome', headless: true });
+  cachedBrowser = await chromium.launch({
+    channel: 'chrome',
+    headless: true,
+    // Shared memory on /dev/shm, not /tmp on the host disk; see session.ts.
+    ignoreDefaultArgs: ['--disable-dev-shm-usage'],
+  });
 
   return cachedBrowser;
 }

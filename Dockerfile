@@ -93,7 +93,8 @@ ENV NODE_ENV=production \
     LOG_LEVEL=info \
     ENABLE_XVFB=0 \
     ENABLE_VNC=0 \
-    ENABLE_MITM=0
+    ENABLE_MITM=0 \
+    DEBUG=pw:browser
 
 VOLUME ["/data/profiles", "/data/captures", "/data/inject"]
 EXPOSE 8190 6080 8080

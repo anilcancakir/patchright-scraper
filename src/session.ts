@@ -392,7 +392,16 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
   const id = input.sessionId ?? randomUUID();
 
   const existing = sessions.get(id);
-  if (existing !== undefined) {
+
+  // A session whose browser has gone is not a session to hand back. Pool
+  // mode mints by the caller's own id and never forgets a dead one, so
+  // returning it here meant every later run drove a dead context while
+  // each reuse pushed `lastUsedAt` forward, out of the idle reaper's
+  // reach. Dropping the entry falls through to the launch below, which
+  // clears the singleton guards and reopens the same profile.
+  if (existing !== undefined && (existing.state === 'closed' || existing.state === 'errored')) {
+    sessions.delete(id);
+  } else if (existing !== undefined) {
     existing.lastUsedAt = Date.now();
     if (input.bearer !== undefined && input.bearer !== '') {
       existing.bearer = input.bearer;
@@ -467,6 +476,14 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
       // must accept the cert chain when the caller flags it.
       ignoreHTTPSErrors: input.ignoreHTTPSErrors ?? false,
       args: resolveChromeArgs(resolvedViewport),
+      // Playwright passes `--disable-dev-shm-usage` by default, which puts
+      // chrome's shared memory in /tmp: on the container's writable layer,
+      // so on the Docker host's disk. When that disk filled on 2026-09-21
+      // the next navigation killed the browser (reproduced by filling a
+      // 200 MB /tmp: the first goto answered "Target page, context or
+      // browser has been closed"). The provisioner gives every container a
+      // 1 GiB /dev/shm for exactly this, so the flag comes off.
+      ignoreDefaultArgs: ['--disable-dev-shm-usage'],
       // Spread rather than `chromiumSandbox: CHROME_SANDBOX_GRANTED`:
       // an ungranted container must leave the option unset so
       // playwright's own default stays in charge, exactly as it is for
@@ -510,6 +527,14 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
     identityHash: input.identityHash,
     bearer: input.bearer,
   };
+
+  // A browser that dies closes its context, and nothing else here would
+  // notice: `/state` answered `active` over a dead browser and the caller
+  // reused it six times. `destroySession` closes the context too, and it
+  // has already set the same state, so this changes nothing for it.
+  context.on('close', () => {
+    session.state = 'closed';
+  });
 
   sessions.set(id, session);
 
