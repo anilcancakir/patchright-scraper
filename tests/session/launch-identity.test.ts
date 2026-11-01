@@ -132,7 +132,8 @@ describe('launch identity precedence', () => {
     // Measured on the live container 2026-09-04. Playwright's `locale`
     // is delivered by `Emulation.setUserAgentOverride({acceptLanguage})`
     // on the PAGE's own CDP session, and patchright's worker-attach
-    // handler (crPage.js:664-699) never sends it to the worker session,
+    // handler (FrameSession._onAttachedToTarget in patchright-core's
+    // lib/coreBundle.js) never sends it to the worker session,
     // so the main thread read fr-FR while a Worker read en-US,en. That
     // is a combination no real browser produces, and one public
     // detector flips its whole verdict on it while all 21 of its other
@@ -265,7 +266,7 @@ describe('launch flags', () => {
     // A patchright viewport is CDP metrics emulation, and for a headful
     // persistent context patchright also resizes the window to the
     // viewport plus hardcoded Linux insets (8 x 131,
-    // patchright-core/lib/server/chromium/crPage.js:836-849). VIEWPORT
+    // FrameSession._updateViewport in patchright-core/lib/coreBundle.js). VIEWPORT
     // doubles as the Xvfb screen geometry (entrypoint.sh:18), so
     // emulating the container default would ask for a 1928x1211 window
     // on a 1920x1080 screen and make outerHeight - innerHeight read

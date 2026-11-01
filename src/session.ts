@@ -55,9 +55,10 @@ export function clearSingletonGuards(profilePath: string): void {
  * the wrong one. It is delivered by `Emulation.setUserAgentOverride`
  * with an `acceptLanguage` on the PAGE's own CDP session, and both that
  * command and the session are per-target: patchright's worker-attach
- * handler (`patchright-core/lib/server/chromium/crPage.js:664-699`)
- * sets up execution contexts, network and console for a worker and
- * never sends the override to it. Measured on the live container: the
+ * handler (`FrameSession._onAttachedToTarget`, bundled into
+ * `patchright-core/lib/coreBundle.js` since 1.64) sets up execution
+ * contexts, network and console for a worker and never sends the
+ * override to it. Re-read on 1.64.2. Measured on the live container: the
  * main thread read `fr-FR` while a `Worker` read `en-US,en`, a
  * combination no real browser produces. It was enough on its own for
  * deviceandbrowserinfo.com to answer `isBot: true` with all 21 of its
@@ -462,7 +463,8 @@ export async function createSession(input: CreateSessionInput): Promise<ManagedS
       // patchright viewport is CDP metrics emulation, and for a headful
       // persistent context patchright also resizes the window to the
       // viewport plus hardcoded Linux insets (8 x 131, patchright-core
-      // crPage.js:836-849). `VIEWPORT` doubles as the Xvfb screen
+      // `FrameSession._updateViewport` in lib/coreBundle.js, unchanged
+      // as of 1.64.2). `VIEWPORT` doubles as the Xvfb screen
       // geometry (entrypoint.sh:18), so emulating the container default
       // would ask for a 1928x1211 window on a 1920x1080 screen and make
       // `outerHeight - innerHeight` read 131, throwing away the 87 the
