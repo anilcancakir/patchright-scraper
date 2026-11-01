@@ -7,7 +7,7 @@
 #                      mitmdump conditionally before exec'ing Node.
 # Built for linux/amd64 (mcr.microsoft.com/playwright base).
 
-FROM mcr.microsoft.com/playwright:v1.56.0-jammy AS builder
+FROM mcr.microsoft.com/playwright:v1.64.1-jammy AS builder
 
 WORKDIR /app
 
@@ -17,7 +17,9 @@ RUN npm install --no-audit --no-fund
 COPY src ./src
 RUN npx tsc -p tsconfig.json
 
-FROM mcr.microsoft.com/playwright:v1.56.0-jammy
+# Tracks the Playwright release patchright-core is built from (1.64.1
+# for patchright 1.64.2), so the base's system deps match its driver.
+FROM mcr.microsoft.com/playwright:v1.64.1-jammy
 
 LABEL org.opencontainers.image.title="anilcancakir/patchright-scraper" \
       org.opencontainers.image.description="Patchright HTTP service + automation runtime for the kodizm scraping platform." \
