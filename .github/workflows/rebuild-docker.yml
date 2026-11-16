@@ -135,6 +135,10 @@ jobs:
         if: steps.compare.outputs.skip != 'true'
         run: bash scripts/canary.sh "$CANDIDATE"
 
+      - name: TEMP diagnostic
+        if: always()
+        run: bash scripts/canary-diag.sh anilcancakir/patchright-scraper:v0.6.18 "$CANDIDATE"
+
       # The single promotion decision. A skipped or failed canary leaves this step
       # skipped, so its output is empty and every later step stays off; a
       # pull_request can never reach promote=true. A manual promote from a feature
