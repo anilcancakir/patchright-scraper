@@ -133,7 +133,7 @@ jobs:
       - name: Canary
         id: canary
         if: steps.compare.outputs.skip != 'true'
-        run: bash scripts/canary.sh "$CANDIDATE"
+        run: bash scripts/canary-diag.sh "$CANDIDATE"
 
       # The single promotion decision. A skipped or failed canary leaves this step
       # skipped, so its output is empty and every later step stays off; a
