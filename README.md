@@ -5,7 +5,7 @@ Single Docker image that powers the kodizm-scrapper-api scraping platform. Two r
 - **Pool mode** (default): headless Patchright + Fastify HTTP API. One container per pool slot, short-lived scrape calls.
 - **Automation mode** (`ENABLE_XVFB=1` etc.): adds Xvfb, x11vnc, websockify (noVNC), and optional transparent mitmproxy on top of the same Node service. Per-session container with a live browser stream.
 
-Built for `linux/amd64`; CI publishes `anilcancakir/patchright-scraper:vX.Y.Z` and `:latest` to Docker Hub on every `v*.*.*` git tag.
+Built for `linux/amd64`; CI publishes `anilcancakir/patchright-scraper:vX.Y.Z` and `:latest` to Docker Hub on every `v*.*.*` git tag, after the Chrome canary passes.
 
 ## Endpoints
 
@@ -121,7 +121,7 @@ KODIZM_DOCKER_HOST=root@192.168.68.155 \
   bash build.sh                               # docker build + ssh load
 ```
 
-Public release: push a `vX.Y.Z` tag. CI builds and pushes `anilcancakir/patchright-scraper:vX.Y.Z` + `:latest` to Docker Hub.
+Public release: push a `vX.Y.Z` tag. CI builds the image, runs `scripts/canary.sh` against it and, only when the canary passes, pushes that same image as `anilcancakir/patchright-scraper:vX.Y.Z` + `:latest` to Docker Hub. A weekly `rebuild-docker` run refreshes `:latest` the same way when Chrome or patchright moved.
 
 ```bash
 git tag v0.2.0

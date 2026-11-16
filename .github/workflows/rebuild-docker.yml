@@ -41,11 +41,15 @@ on:
 permissions:
   contents: read
 
-# Two runs must not promote at once; a newer pull_request push supersedes the older run.
-# The shared group also serialises use of the fixed :candidate tag.
+# Two runs must not promote at once. The group is shared with release-docker.yml and
+# serialises use of the fixed :candidate tag. `queue: max` keeps every waiting run:
+# with the default single pending slot a release tag waiting behind this run would be
+# cancelled by the next arrival and Docker Hub would never get that version. It cannot
+# be combined with cancel-in-progress: true, so a superseded pull_request run is queued.
 concurrency:
   group: rebuild-docker-${{ github.event_name == 'pull_request' && github.ref || 'promote' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  queue: max
+  cancel-in-progress: false
 
 env:
   IMAGE: anilcancakir/patchright-scraper
