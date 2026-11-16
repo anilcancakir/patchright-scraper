@@ -84,6 +84,13 @@ RUN npm ci --omit=dev --no-audit --no-fund \
     && npx patchright install chrome \
     && npm cache clean --force
 
+# Chrome 157 blocks plain http:// navigations to a hostname
+# (net::ERR_BLOCKED_BY_CLIENT) even though the driver still passes
+# --disable-features=HttpsUpgrades, so the feature flag cannot be trusted to
+# keep this off. A managed policy states it independently of flag names;
+# scripts/canary.sh fails the weekly rebuild if it ever stops working.
+COPY chrome-policy.json /etc/opt/chrome/policies/managed/kodizm.json
+
 COPY --from=builder /app/dist ./dist
 COPY mitm ./mitm
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
