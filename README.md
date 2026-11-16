@@ -78,9 +78,6 @@ Automation mode (Xvfb + VNC + mitm)
 
 | Variable                    | Default     | Effect                                                                       |
 | --------------------------- | ----------- | ---------------------------------------------------------------------------- |
-| `PATCHRIGHT_STEALTH_LEVEL`  | `basic`     | `basic` or `aggressive`.                                                     |
-| `FINGERPRINT_PROFILE`       | unset       | Built-in: `desktop`, `mobile-tr`, `googlebot`. Sets UA + locale + headers.   |
-| `FINGERPRINT_PROFILE_FILE`  | unset       | Path to a JSON profile, overrides the built-in.                              |
 | `JS_INJECTIONS_DIR`         | `/data/inject` | Every `*.js` in this dir gets `addInitScript`-injected on each page boot. |
 
 ### Persistence + capture

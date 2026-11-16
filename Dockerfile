@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.6
 #
 # patchright-scraper unified image. Single Dockerfile, two runtime modes:
-#   - default (pool):  headless, just the Node service.
+#   - pool:            headed under Xvfb; kodizm sets ENABLE_XVFB=1 on pool
+#                      containers (the image default is ENABLE_XVFB=0).
 #   - automation:      ENABLE_XVFB=1 + opt-in ENABLE_VNC / ENABLE_MITM.
 #                      entrypoint.sh boots Xvfb / x11vnc / websockify /
 #                      mitmdump conditionally before exec'ing Node.
@@ -11,14 +12,14 @@ FROM mcr.microsoft.com/playwright:v1.64.1-jammy AS builder
 
 WORKDIR /app
 
-COPY package.json tsconfig.json ./
-RUN npm install --no-audit --no-fund
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --no-audit --no-fund
 
 COPY src ./src
 RUN npx tsc -p tsconfig.json
 
-# Tracks the Playwright release patchright-core is built from (1.64.1
-# for patchright 1.64.2), so the base's system deps match its driver.
+# Base image stays pinned at v1.64.1-jammy: it supplies system libs and
+# fonts only. Chrome itself comes from `patchright install chrome` below.
 FROM mcr.microsoft.com/playwright:v1.64.1-jammy
 
 LABEL org.opencontainers.image.title="anilcancakir/patchright-scraper" \
@@ -78,8 +79,8 @@ RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula sele
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund \
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund \
     && npx patchright install chrome \
     && npm cache clean --force
 
