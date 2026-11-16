@@ -1,16 +1,45 @@
+# Publishes a release tag as :vX.Y.Z and :latest, but only after
+# scripts/canary.sh passes against the image that is pushed. The image is built
+# once, loaded, tested and then pushed as built; nothing is rebuilt between the
+# test and the push, so a Chrome that breaks the scraper never reaches :latest.
+#
+# rebuild-docker.yml owns the weekly refresh and shares the `promote`
+# concurrency group, so the two never move :latest at the same time.
+
 name: release-docker
 
 on:
   push:
     tags:
       - "v*.*.*"
+  # A change to this file builds and runs the canary and stops there: only a tag
+  # push can log in or push.
+  pull_request:
+    paths:
+      - .github/workflows/release-docker.yml
+
+permissions:
+  contents: read
+
+# `queue: max` keeps every waiting run: with the default single pending slot a
+# release tag waiting behind a weekly rebuild would be cancelled by the next run
+# and Docker Hub would never get that version. It cannot be combined with
+# cancel-in-progress: true, so a superseded pull_request run is queued, not cancelled.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('release-docker-{0}', github.ref) || 'rebuild-docker-promote' }}
+  queue: max
+  cancel-in-progress: false
+
+env:
+  UNDER_TEST: patchright-scraper:under-test
 
 jobs:
   build-docker-images:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Docker meta
         id: docker_meta
@@ -22,24 +51,51 @@ jobs:
           flavor: |
             latest=auto
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      # On a pull_request the meta action yields no tags, so only the local
+      # under-test tag exists and nothing could be pushed even by mistake.
+      - name: Build image
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64
-          push: true
-          tags: ${{ steps.docker_meta.outputs.tags }}
+          load: true
+          push: false
+          tags: |
+            ${{ env.UNDER_TEST }}
+            ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
+
+      - name: Canary
+        run: bash scripts/canary.sh "$UNDER_TEST"
+
+      - name: Login to DockerHub
+        if: github.event_name == 'push'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push tested image
+        if: github.event_name == 'push'
+        env:
+          TAGS: ${{ steps.docker_meta.outputs.tags }}
+        run: |
+          if [ -z "$TAGS" ]; then
+            echo "::error::the tag ${GITHUB_REF_NAME} is not a semver release, nothing to push"
+            exit 1
+          fi
+          tested=$(docker image inspect -f '{{.Id}}' "$UNDER_TEST")
+          while IFS= read -r tag; do
+            if [ -z "$tag" ]; then
+              continue
+            fi
+            if [ "$(docker image inspect -f '{{.Id}}' "$tag")" != "$tested" ]; then
+              echo "::error::${tag} is not the image the canary ran, refusing to push"
+              exit 1
+            fi
+            docker push "$tag"
+          done <<< "$TAGS"
