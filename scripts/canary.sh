@@ -87,10 +87,21 @@ print(node)
 ' "$1"
 }
 
-# POST a JSON body and print the response, failing on any HTTP error status.
+# POST a JSON body and print the response. On an HTTP error the body goes to
+# stderr, because inside a command substitution a bare curl failure would hide
+# the service's own error message.
 post_json() {
-    curl -sS --fail-with-body --max-time 120 \
-        -H 'Content-Type: application/json' -d "$2" "$1"
+    local body_file status
+    body_file="$(mktemp)"
+    status="$(curl -sS --max-time 120 -o "${body_file}" -w '%{http_code}' \
+        -H 'Content-Type: application/json' -d "$2" "$1")"
+    if [[ "${status}" != 2* ]]; then
+        echo "[canary] POST $1 answered HTTP ${status}: $(cat "${body_file}")" >&2
+        rm -f "${body_file}"
+        return 1
+    fi
+    cat "${body_file}"
+    rm -f "${body_file}"
 }
 
 # Host port 80 is privileged; the Docker daemon binds it, so no sudo is needed.
