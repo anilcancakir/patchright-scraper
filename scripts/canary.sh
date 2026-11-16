@@ -10,12 +10,14 @@
 #      public-looking name that resolves to a private address is refused by this
 #      Chrome (net::ERR_BLOCKED_BY_CLIENT), and an IP literal is never upgraded,
 #      so a name cannot be used to observe an upgrade against a local fixture.
-#   2. no https upgrade: a plain http:// page on the real internet
-#      (neverssl.com exists to stay on http) must still end on http://. Chrome 156
-#      started upgrading http:// navigations (playwright issue #43871) and the
-#      driver was meant to switch that off. The check fails only on a positive
-#      signal (the final URL is https://); an unreachable site is a warning, so a
-#      network blip never blocks a promotion.
+#   2. plain http:// to a hostname still works: httpforever.com serves http only,
+#      so the page must open and stay on http://. Chrome 156 and 157 started
+#      upgrading or blocking http:// navigations (playwright issue #43871; the
+#      candidate Chrome 157 answered net::ERR_BLOCKED_BY_CLIENT where Chrome 156
+#      loaded the page), and the driver is meant to switch that off. The check
+#      fails on a positive signal (ended on https://, or blocked by the client); an
+#      unreachable site is only a warning, so a network blip never blocks a
+#      promotion.
 # The Chrome version is printed so the workflow log shows what was tested.
 #
 # Usage: scripts/canary.sh <image-ref>
@@ -26,7 +28,7 @@ readonly MARKER="kodizm-canary-ok"
 readonly SERVICE_PORT=8190
 readonly FIXTURE_PORT=8080
 readonly FIXTURE_URL="http://127.0.0.1:${FIXTURE_PORT}/"
-readonly PLAIN_HTTP_URL="http://neverssl.com/"
+readonly PLAIN_HTTP_URL="http://httpforever.com/"
 readonly HEALTH_ATTEMPTS=45
 readonly FIXTURE_ATTEMPTS=20
 FIXTURE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary-fixture"
@@ -178,15 +180,25 @@ main() {
     fi
     log "fixture page asserted"
 
-    # 3. A plain http:// page must stay on http://. Fail only on a positive signal.
-    if final_url="$(goto_final_url "${base}" "${session_id}" "${PLAIN_HTTP_URL}")"; then
+    # 3. A plain http:// page must open and stay on http://. Fail only on a
+    #    positive signal; the request's own error text tells the two apart.
+    local plain_err
+    plain_err="$(mktemp)"
+    if final_url="$(goto_final_url "${base}" "${session_id}" "${PLAIN_HTTP_URL}" 2>"${plain_err}")"; then
+        rm -f "${plain_err}"
         if [[ "${final_url}" == https://* ]]; then
             log "${PLAIN_HTTP_URL} ended on ${final_url}: Chrome upgraded an http:// navigation (HttpsUpgrades?)"
             exit 1
         fi
-        log "no https upgrade (${PLAIN_HTTP_URL} ended on ${final_url})"
+        log "plain http works (${PLAIN_HTTP_URL} ended on ${final_url})"
+    elif grep -q 'ERR_BLOCKED_BY_CLIENT' "${plain_err}"; then
+        cat "${plain_err}"
+        rm -f "${plain_err}"
+        log "${PLAIN_HTTP_URL} was blocked by the client: this Chrome refuses plain http:// to a hostname"
+        exit 1
     else
-        log "WARNING: ${PLAIN_HTTP_URL} was unreachable, the https upgrade check was skipped"
+        rm -f "${plain_err}"
+        log "WARNING: ${PLAIN_HTTP_URL} was unreachable, the plain http check was skipped"
     fi
 
     # 4. Report the Chrome that was tested.
