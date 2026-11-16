@@ -1,0 +1,182 @@
+# Weekly rebuild of the image so it picks up the newest Chrome, promoted to
+# :latest only after scripts/canary.sh passes against the exact image under
+# test. A Chrome release can break the scraper silently (the http:// to https://
+# upgrade is one such case), so a plain rebuild-and-push would ship it to the pool.
+#
+# The image is built once, with no layer reuse (no-cache): a reused
+# `patchright install chrome` layer would keep serving last week's Chrome and the
+# rebuild would be a no-op. The image the canary ran is the image that is pushed
+# (as :candidate) and then retagged, so the promoted image is byte-for-byte the
+# tested one; nothing is rebuilt between the test and the promotion.
+#
+# Only a schedule run, or a manual run with promote=true on the default branch,
+# can log in, push or move :latest, and only through the `decide` step after a
+# passing canary. A pull_request run builds and runs the canary and stops there.
+
+name: rebuild-docker
+
+on:
+  # Scheduled workflows run only from the default branch.
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: "Promote :latest when the canary passes"
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - Dockerfile
+      - chrome-policy.json
+      - package.json
+      - package-lock.json
+      - tsconfig.json
+      - src/**
+      - entrypoint.sh
+      - mitm/**
+      - scripts/**
+      - .github/workflows/rebuild-docker.yml
+
+permissions:
+  contents: read
+
+# Two runs must not promote at once; a newer pull_request push supersedes the older run.
+# The shared group also serialises use of the fixed :candidate tag.
+concurrency:
+  group: rebuild-docker-${{ github.event_name == 'pull_request' && github.ref || 'promote' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: anilcancakir/patchright-scraper
+  CANDIDATE: anilcancakir/patchright-scraper:candidate
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      # Full history and tags: the weekly run needs them to find the newest release
+      # tag (and `cond && 0 || 1` would not work, 0 is falsy in expressions).
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The weekly run builds the newest release, not main HEAD: an untagged src
+      # change merged to main must not reach the pool through the weekly rebuild.
+      # Other events build the ref that triggered them.
+      - name: Checkout newest release tag
+        if: github.event_name == 'schedule'
+        run: |
+          tag=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n 1)
+          if [ -z "$tag" ]; then
+            echo "::error::no v*.*.* release tag found, refusing to build main HEAD"
+            exit 1
+          fi
+          echo "building release ${tag}"
+          git checkout --detach "$tag"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build candidate
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          no-cache: true
+          tags: ${{ env.CANDIDATE }}
+
+      - name: Read candidate versions
+        id: versions
+        run: |
+          chrome=$(docker run --rm --entrypoint google-chrome "$CANDIDATE" --version | grep -oE '[0-9]+(\.[0-9]+){3}')
+          patchright=$(docker run --rm --entrypoint node "$CANDIDATE" -p \
+            "require('/app/node_modules/patchright/package.json').version")
+          echo "Chrome ${chrome}, patchright ${patchright}"
+          {
+            echo "chrome=${chrome}"
+            echo "chrome_major=${chrome%%.*}"
+            echo "patchright=${patchright}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Only the weekly run skips an unchanged build; a pull_request or manual run
+      # always goes through the canary.
+      - name: Compare with published latest
+        id: compare
+        env:
+          EVENT: ${{ github.event_name }}
+          CANDIDATE_CHROME: ${{ steps.versions.outputs.chrome }}
+          CANDIDATE_PATCHRIGHT: ${{ steps.versions.outputs.patchright }}
+        run: |
+          skip=false
+          if [ "$EVENT" = "schedule" ]; then
+            if docker pull --quiet "${IMAGE}:latest" >/dev/null \
+              && latest_chrome=$(docker run --rm --entrypoint google-chrome "${IMAGE}:latest" --version \
+                | grep -oE '[0-9]+(\.[0-9]+){3}') \
+              && latest_patchright=$(docker run --rm --entrypoint node "${IMAGE}:latest" -p \
+                "require('/app/node_modules/patchright/package.json').version"); then
+              echo "published latest: Chrome ${latest_chrome}, patchright ${latest_patchright}"
+              if [ "$latest_chrome" = "$CANDIDATE_CHROME" ] && [ "$latest_patchright" = "$CANDIDATE_PATCHRIGHT" ]; then
+                skip=true
+                echo "::notice::Chrome and patchright are unchanged, skipping canary and promotion"
+              fi
+            else
+              echo "::notice::no readable :latest to compare with, treating the candidate as new"
+            fi
+          fi
+          echo "skip=${skip}" >> "$GITHUB_OUTPUT"
+
+      - name: Canary
+        id: canary
+        if: steps.compare.outputs.skip != 'true'
+        run: bash scripts/canary.sh "$CANDIDATE"
+
+      # The single promotion decision. A skipped or failed canary leaves this step
+      # skipped, so its output is empty and every later step stays off; a
+      # pull_request can never reach promote=true. A manual promote from a feature
+      # branch must not move :latest.
+      - name: Decide promotion
+        id: decide
+        if: steps.canary.outcome == 'success'
+        env:
+          EVENT: ${{ github.event_name }}
+          PROMOTE_INPUT: ${{ inputs.promote }}
+          REF: ${{ github.ref }}
+          DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+        run: |
+          promote=false
+          if [ "$EVENT" = "schedule" ]; then
+            promote=true
+          elif [ "$EVENT" = "workflow_dispatch" ] && [ "$PROMOTE_INPUT" = "true" ] && [ "$REF" = "$DEFAULT_REF" ]; then
+            promote=true
+          fi
+          echo "promote=${promote}"
+          echo "promote=${promote}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to DockerHub
+        if: steps.decide.outputs.promote == 'true'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Pushes the image the canary ran. The fixed :candidate tag keeps Docker Hub
+      # free of per-run tags; the concurrency group serialises promotions.
+      - name: Push tested candidate
+        if: steps.decide.outputs.promote == 'true'
+        run: docker push "$CANDIDATE"
+
+      - name: Promote latest
+        if: steps.decide.outputs.promote == 'true'
+        env:
+          CHROME_MAJOR: ${{ steps.versions.outputs.chrome_major }}
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE}:latest" \
+            -t "${IMAGE}:chrome-${CHROME_MAJOR}-$(date -u +%Y%m%d)" \
+            "${IMAGE}:candidate"
