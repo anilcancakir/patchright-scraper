@@ -18,6 +18,12 @@
 #      fails on a positive signal (ended on https://, or blocked by the client); an
 #      unreachable site is only a warning, so a network blip never blocks a
 #      promotion.
+#   3. the capture pipeline still records a flow: a second container runs with
+#      ENABLE_MITM=1, a session routed through the in-container mitmproxy opens
+#      an https page, and a file must land in /data/captures/queue. The addon
+#      drops every flow that lacks the X-Kodizm-Session header, so a file there
+#      proves the header stamped by the route interceptor reached the wire (the
+#      pusher is left without MITM_PUSH_URL, so it never removes the file).
 # The Chrome version is printed so the workflow log shows what was tested.
 #
 # Usage: scripts/canary.sh <image-ref>
@@ -29,8 +35,11 @@ readonly SERVICE_PORT=8190
 readonly FIXTURE_PORT=8080
 readonly FIXTURE_URL="http://127.0.0.1:${FIXTURE_PORT}/"
 readonly PLAIN_HTTP_URL="http://httpforever.com/"
+readonly CAPTURE_URL="https://example.com/"
+readonly CAPTURE_PROXY="http://127.0.0.1:8080"
 readonly HEALTH_ATTEMPTS=45
 readonly FIXTURE_ATTEMPTS=20
+readonly CAPTURE_ATTEMPTS=20
 FIXTURE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/canary-fixture"
 readonly FIXTURE_DIR
 
@@ -63,15 +72,18 @@ usage() {
 
 readonly IMAGE="$1"
 readonly CONTAINER="patchright-canary-$$"
+readonly CAPTURE_CONTAINER="${CONTAINER}-capture"
 
 cleanup() {
-    local status=$?
+    local status=$? name
 
-    if (( status != 0 )) && docker inspect "${CONTAINER}" >/dev/null 2>&1; then
-        log "FAILED (exit ${status}); last container output:"
-        docker logs --tail 40 "${CONTAINER}" 2>&1 || true
-    fi
-    docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+    for name in "${CONTAINER}" "${CAPTURE_CONTAINER}"; do
+        if (( status != 0 )) && docker inspect "${name}" >/dev/null 2>&1; then
+            log "FAILED (exit ${status}); last output of ${name}:"
+            docker logs --tail 40 "${name}" 2>&1 || true
+        fi
+        docker rm -f "${name}" >/dev/null 2>&1 || true
+    done
 }
 trap cleanup EXIT
 
@@ -147,6 +159,52 @@ goto_final_url() {
     json_get result.output.url <<<"${response}"
 }
 
+# Route a session through the in-container mitmproxy, open an https page and
+# require a capture file in the queue. A navigation that cannot complete is
+# only a warning (the target is a public site); a completed navigation with an
+# empty queue means the session header never reached the wire.
+check_capture() {
+    log "starting ${IMAGE} with ENABLE_MITM=1"
+    docker run -d --name "${CAPTURE_CONTAINER}" \
+        --shm-size=1g \
+        -e ENABLE_XVFB=1 \
+        -e ENABLE_MITM=1 \
+        -p "127.0.0.1::${SERVICE_PORT}" \
+        "${IMAGE}" >/dev/null
+
+    local mapped base session_id nav_err queued
+    mapped="$(docker port "${CAPTURE_CONTAINER}" "${SERVICE_PORT}/tcp" | head -n 1)"
+    base="http://127.0.0.1:${mapped##*:}"
+    wait_for_health "${base}"
+
+    session_id="$(post_json "${base}/v1/sessions" \
+        "{\"captureTraffic\":true,\"ignoreHTTPSErrors\":true,\"proxy\":{\"server\":\"${CAPTURE_PROXY}\"}}" \
+        | json_get session.id)"
+    log "capture session ${session_id}"
+
+    nav_err="$(mktemp)"
+    if ! goto_final_url "${base}" "${session_id}" "${CAPTURE_URL}" >/dev/null 2>"${nav_err}"; then
+        cat "${nav_err}"
+        rm -f "${nav_err}"
+        log "WARNING: ${CAPTURE_URL} did not load through the capture proxy, the capture check was skipped"
+        return
+    fi
+    rm -f "${nav_err}"
+
+    for _ in $(seq 1 "${CAPTURE_ATTEMPTS}"); do
+        queued="$(docker exec "${CAPTURE_CONTAINER}" sh -c 'ls -A /data/captures/queue | wc -l')"
+        if (( queued > 0 )); then
+            log "capture pipeline queued ${queued} flow(s) for ${CAPTURE_URL}"
+            return
+        fi
+        sleep 1
+    done
+
+    log "${CAPTURE_URL} loaded through the capture proxy but no capture file was queued (session header missing on the wire?)"
+    docker exec "${CAPTURE_CONTAINER}" tail -n 25 /tmp/mitm.log || true
+    exit 1
+}
+
 main() {
     # 1. Start the image and wait until the service answers.
     start_container
@@ -201,7 +259,11 @@ main() {
         log "WARNING: ${PLAIN_HTTP_URL} was unreachable, the plain http check was skipped"
     fi
 
-    # 4. Report the Chrome that was tested.
+    # 4. The capture pipeline, in its own container: the mitm listener and the
+    #    fixture both want port 8080.
+    check_capture
+
+    # 5. Report the Chrome that was tested.
     docker exec "${CONTAINER}" google-chrome --version
     log "PASS"
 }
